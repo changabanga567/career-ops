@@ -1,0 +1,79 @@
+# Auto-apply answers for auto-apply-workday.mjs
+# Copy to config/auto-apply.yml (gitignored) and fill in your own answers:
+#
+#   cp config/auto-apply.example.yml config/auto-apply.yml
+#
+# Login: put WORKDAY_EMAIL and WORKDAY_PASSWORD in .env, not here.
+# Anything left blank falls back to config/profile.yml where possible
+# (name, email, phone, city, country, LinkedIn, sponsorship).
+#
+# Answers are matched against the option text on the page loosely: "Yes"
+# picks "Yes, I am authorized…", "No" picks "I am not a protected veteran",
+# and "Decline" picks "I don't wish to answer". Write the closest wording
+# you see on real forms when the loose match is not enough.
+
+personal:
+  first_name: ""            # default: first word of candidate.full_name
+  last_name: ""             # default: rest of candidate.full_name
+  preferred_name: ""
+  email: ""                 # default: candidate.email
+  phone: ""                 # default: candidate.phone (digits only works best)
+  phone_device_type: "Mobile"
+  phone_country_code: "United States of America (+1)"
+  address_line_1: ""
+  address_line_2: ""
+  city: ""                  # default: location.city
+  state: ""                 # full name as Workday lists it, e.g. "California"
+  postal_code: ""
+  country: "United States of America"
+  linkedin: ""              # default: candidate.linkedin
+  website: ""               # default: candidate.portfolio_url
+
+# "How did you hear about us?"
+source: "LinkedIn"
+
+# "Have you previously worked for <company>?"
+previously_employed: "No"
+
+work_authorization:
+  authorized: "Yes"         # legally authorized to work in the country of the job
+  needs_sponsorship: "No"   # default: location.needs_sponsorship in profile.yml
+  over_18: "Yes"
+
+# Voluntary self-identification. Leave a line blank to be asked the first
+# time it shows up (your typed answer is remembered), or use "Decline".
+eeo:
+  gender: ""                # e.g. "Male" / "Female" / "Decline"
+  race: ""                  # e.g. "Asian (Not Hispanic or Latino)" / "Decline"
+  hispanic_or_latino: ""    # "Yes" / "No"
+  veteran: ""               # "No" → "I am not a protected veteran"
+  disability: ""            # "No" → "No, I do not have a disability…"
+  sexual_orientation: ""
+  transgender: ""
+
+work:
+  desired_salary: ""        # number only works best, e.g. "120000"
+  start_date: ""            # MM/DD/YYYY for date pickers, or "2 weeks" for text boxes
+  relocate: "Yes"
+  onsite_ok: "Yes"
+  background_check: "Yes"
+  non_compete: "No"
+  relatives: "No"
+  government_official: "No"
+  referred: "No"
+
+# Anything else, matched in order (case-insensitive regex on the question
+# text) before the built-in rules. Add a line here whenever a run stops with
+# needs_input.
+questions:
+  # - match: "security clearance"
+  #   answer: "No"
+  # - match: "years of experience with python"
+  #   answer: "5"
+  # - match: "text message|sms"
+  #   answer: "No"
+
+behavior:
+  # Tick "I agree / acknowledge / consent / have read the terms" boxes.
+  # Never ticks SMS, marketing, job-alert or preferred-name opt-ins.
+  accept_agreements: true
