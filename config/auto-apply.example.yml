@@ -34,6 +34,9 @@ source: "LinkedIn"
 
 # "Have you previously worked for <company>?"
 previously_employed: "No"
+# Employers you DID work for: the answer becomes "Yes" when applying there.
+previously_employed_at: []
+  # - "The Home Depot"
 
 work_authorization:
   authorized: "Yes"         # legally authorized to work in the country of the job

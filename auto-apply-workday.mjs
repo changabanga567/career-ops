@@ -31,7 +31,8 @@ import { createInterface } from 'readline/promises';
 import { fileURLToPath } from 'url';
 import { loadYaml } from './lib/yaml-document.mjs';
 import { isMainModule } from './lib/is-main-module.mjs';
-import { getCareerOpsRoot, getProfilePath } from './path-resolver.mjs';
+import { getCareerOpsRoot, getProfilePath, resolveTrackerPath } from './path-resolver.mjs';
+import { linkedReportNumbers, parseScore, parseTrackerRow, resolveColumns } from './tracker-parse.mjs';
 import { freshLaunchOptions } from './apply-scope.mjs';
 import { atsVendorOf } from './ats-vendor.mjs';
 import {
@@ -56,6 +57,7 @@ const NAV_TIMEOUT = 45_000;
 const USAGE = `Usage:
   node auto-apply-workday.mjs --url <workday job url> [--pdf output/cv.pdf | --report N] [options]
   node auto-apply-workday.mjs --batch jobs.txt [options]
+  node auto-apply-workday.mjs --from-tracker [--limit N] [--min-score X] [options]
 
 Fills a Workday application end to end and stops on the Review page.
 
@@ -64,6 +66,10 @@ Fills a Workday application end to end and stops on the Review page.
   --report N       report number: links the tracker row and, without --pdf,
                    picks the newest tailored PDF for that report in output/
   --batch FILE     one job per line: <url> [pdf] [report=N]  (# comments ok)
+  --from-tracker   every Evaluated Workday row in data/applications.md that
+                   has a tailored PDF, newest first
+  --limit N        with --from-tracker: at most N jobs this run
+  --min-score X    with --from-tracker: skip rows scored below X (e.g. 4.0)
   --submit         click Submit on the Review page (default: stop and wait)
   --headless       run without a visible window (implies --no-prompt)
   --no-prompt      never ask in the terminal; a job with an unanswered
@@ -78,7 +84,7 @@ Login:   WORKDAY_EMAIL / WORKDAY_PASSWORD in .env.`;
 // ── CLI ──────────────────────────────────────────────────────────────
 
 export function parseCli(argv) {
-  const opts = { jobs: [], submit: false, headless: false, prompt: true, force: false, dryRun: false, help: false };
+  const opts = { jobs: [], submit: false, headless: false, prompt: true, force: false, dryRun: false, help: false, fromTracker: false, limit: null, minScore: null };
   let url = null;
   let pdf = null;
   let report = null;
@@ -95,6 +101,9 @@ export function parseCli(argv) {
       case '--pdf': pdf = value(); break;
       case '--report': report = value(); break;
       case '--batch': batch = value(); break;
+      case '--from-tracker': opts.fromTracker = true; break;
+      case '--limit': opts.limit = Number(value()); break;
+      case '--min-score': opts.minScore = Number(value()); break;
       case '--submit': opts.submit = true; break;
       case '--headless': opts.headless = true; opts.prompt = false; break;
       case '--no-prompt': opts.prompt = false; break;
@@ -108,7 +117,9 @@ export function parseCli(argv) {
   if (report != null && !/^\d+$/.test(report)) throw new Error('--report must be a number');
   if (url) opts.jobs.push({ url, pdf, report });
   if (batch) opts.jobs.push(...parseBatchFile(readFileSync(resolve(DATA_ROOT, batch), 'utf-8')));
-  if (opts.jobs.length === 0) throw new Error('give --url or --batch');
+  if (opts.limit != null && !(Number.isInteger(opts.limit) && opts.limit > 0)) throw new Error('--limit must be a positive whole number');
+  if (opts.minScore != null && Number.isNaN(opts.minScore)) throw new Error('--min-score must be a number');
+  if (opts.jobs.length === 0 && !opts.fromTracker) throw new Error('give --url, --batch or --from-tracker');
   return opts;
 }
 
@@ -169,8 +180,24 @@ export function isWorkdayUrl(url) {
   return atsVendorOf(url) === 'workday';
 }
 
-/** Newest tailored PDF for a report: bundle cv/tailored/vNNN/cv.pdf first, then flat output/cv-*-NNN-*.pdf. */
-export function findReportPdf(reportNum, outputDir = join(DATA_ROOT, 'output')) {
+/**
+ * Tailored PDF for a report. data/pdf-index.tsv (written by generate-pdf.mjs)
+ * is authoritative, since flat PDF names usually carry no report number; the
+ * newest indexed row wins. Without an index hit, fall back to the newest
+ * bundle cv/tailored/vNNN/cv.pdf or flat output/cv-*-NNN-*.pdf.
+ */
+export function findReportPdf(reportNum, outputDir = join(DATA_ROOT, 'output'), indexPath = join(DATA_ROOT, 'data', 'pdf-index.tsv')) {
+  const num = Number(reportNum);
+  if (existsSync(indexPath)) {
+    const root = dirname(dirname(indexPath));
+    const hits = readFileSync(indexPath, 'utf-8').split(/\r?\n/)
+      .filter((line) => line && !line.startsWith('#'))
+      .map((line) => line.split('\t'))
+      .filter(([report, pdf, , , , kind]) => /^\d+$/.test(report ?? '') && Number(report) === num && pdf && !/-ats[-.]/.test(pdf) && (!kind || kind === 'cv'))
+      .map(([, pdf]) => resolve(root, pdf))
+      .filter((pdf) => existsSync(pdf));
+    if (hits.length) return hits[hits.length - 1];
+  }
   if (!existsSync(outputDir)) return null;
   const padded = String(reportNum).padStart(3, '0');
   const candidates = [];
@@ -203,6 +230,82 @@ function resolveJobPdf(job) {
     return found;
   }
   throw new Error('each job needs --pdf or --report');
+}
+
+// ── Tracker + blacklist ──────────────────────────────────────────────
+
+const companyKey = (s) => String(s ?? '').toLowerCase().replace(/[^a-z0-9]+/g, '');
+
+/** Rows of data/blacklist.md: | Company | Since | Scope | Reason |. */
+export function parseBlacklist(text) {
+  const rules = [];
+  for (const line of String(text ?? '').split(/\r?\n/)) {
+    if (!line.trim().startsWith('|')) continue;
+    const [company, , scope] = line.split('|').slice(1).map((c) => c.trim());
+    if (!company || /^-+$/.test(company) || company.toLowerCase() === 'company') continue;
+    rules.push({ company, scope: (scope || 'company').toLowerCase() });
+  }
+  return rules;
+}
+
+/** The rule that blocks this job, or null. The Workday tenant slug stands in for a missing company name. */
+export function blacklistHit(rules, { company, url }) {
+  let host = '';
+  try { host = new URL(url).hostname.toLowerCase().replace(/\.$/, ''); } catch { /* no host */ }
+  const names = [companyKey(company), companyKey(host.split('.')[0])].filter(Boolean);
+  for (const rule of rules) {
+    if (rule.scope === 'domain') {
+      const d = rule.company.toLowerCase().replace(/\.$/, '');
+      if (host && (host === d || host.endsWith(`.${d}`))) return rule;
+    } else if (names.includes(companyKey(rule.company))) {
+      return rule;
+    }
+  }
+  return null;
+}
+
+/**
+ * Evaluated Workday rows of the tracker, newest first.
+ * io.reportUrl(num) → the report's **URL:** (or null); io.findPdf(num) → PDF path or null.
+ */
+export function selectTrackerJobs(trackerText, io, { minScore = null } = {}) {
+  const lines = String(trackerText ?? '').split(/\r?\n/);
+  const colmap = resolveColumns(lines);
+  const jobs = [];
+  const skipped = [];
+  for (const line of lines) {
+    const row = parseTrackerRow(line, colmap);
+    if (!row || row.status.trim().toLowerCase() !== 'evaluated') continue;
+    const report = linkedReportNumbers(row.report, row.notes)[0];
+    const url = row.url || (report != null ? io.reportUrl(report) : null);
+    const label = `#${row.num} ${row.company}`;
+    if (!url || !isWorkdayUrl(url)) continue;
+    const score = parseScore(row.score);
+    if (minScore != null && !(score >= minScore)) { skipped.push(`${label}: score ${row.score || 'none'} < ${minScore}`); continue; }
+    const pdf = report != null ? io.findPdf(report) : null;
+    if (!pdf) { skipped.push(`${label}: no tailored PDF yet`); continue; }
+    jobs.push({ url, pdf, report: report != null ? String(report) : null, company: row.company, date: row.date, num: row.num });
+  }
+  jobs.sort((a, b) => String(b.date).localeCompare(String(a.date)) || b.num - a.num);
+  return { jobs, skipped };
+}
+
+function reportUrl(num) {
+  const dir = join(DATA_ROOT, 'reports');
+  if (!existsSync(dir)) return null;
+  const padded = String(num).padStart(3, '0');
+  const file = readdirSync(dir).find((name) => name.startsWith(`${padded}-`) && name.endsWith('.md'));
+  if (!file) return null;
+  const m = /^\*\*URL:\*\*\s*<?(https?:\/\/[^\s>)]+)/m.exec(readFileSync(join(dir, file), 'utf-8'));
+  return m ? m[1] : null;
+}
+
+function trackerJobs(opts) {
+  const trackerPath = resolveTrackerPath(DATA_ROOT);
+  if (!existsSync(trackerPath)) throw new Error(`tracker not found: ${trackerPath}`);
+  const { jobs, skipped } = selectTrackerJobs(readFileSync(trackerPath, 'utf-8'), { reportUrl, findPdf: (n) => findReportPdf(n) }, { minScore: opts.minScore });
+  for (const s of skipped) console.log(`  skip ${s}`);
+  return opts.limit ? jobs.slice(0, opts.limit) : jobs;
 }
 
 function credentials(profile, config) {
@@ -796,6 +899,18 @@ async function main() {
   const config = readYamlFile(CONFIG_PATH, 'config/auto-apply.yml');
   if (!existsSync(CONFIG_PATH)) console.warn('warning: config/auto-apply.yml not found — copy config/auto-apply.example.yml and fill in your answers');
   const profile = readYamlFile(getProfilePath(), 'config/profile.yml');
+  if (opts.fromTracker) opts.jobs.push(...trackerJobs(opts));
+  const blacklistPath = join(DATA_ROOT, 'data', 'blacklist.md');
+  const blacklist = existsSync(blacklistPath) ? parseBlacklist(readFileSync(blacklistPath, 'utf-8')) : [];
+  opts.jobs = opts.jobs.filter((job) => {
+    const hit = blacklistHit(blacklist, job);
+    if (hit) console.log(`  skip ${job.company || job.url}: on your blacklist (${hit.company})`);
+    return !hit;
+  });
+  if (opts.jobs.length === 0) {
+    console.log('No Workday jobs to apply to.');
+    return;
+  }
   for (const job of opts.jobs) {
     if (!isWorkdayUrl(job.url)) throw new Error(`not a Workday URL: ${job.url}`);
     job.pdfPath = resolveJobPdf(job);
@@ -820,7 +935,7 @@ async function main() {
     say: (msg) => console.log(msg),
     ask: (q) => (rl ? rl.question(q) : Promise.resolve('')),
   };
-  ctx.refreshResolver = () => { ctx.resolve = createResolver({ config, profile, learned: ctx.learned }); };
+  ctx.refreshResolver = () => { ctx.resolve = createResolver({ config, profile, learned: ctx.learned, employer: ctx.employer }); };
   ctx.refreshResolver();
 
   const { chromium } = await import('playwright');
@@ -834,6 +949,8 @@ async function main() {
         summary.push({ url: job.url, status: 'skipped_duplicate' });
         continue;
       }
+      ctx.employer = job.company || (() => { try { return new URL(job.url).hostname.split('.')[0]; } catch { return ''; } })();
+      ctx.refreshResolver();
       const result = await runJob(browser, job, ctx);
       if (result.status === 'submitted' && job.report) result.tracker = markApplied(job.report);
       logResult({ url: job.url, report: job.report ?? null, pdf: job.pdfPath, ...result });
