@@ -209,14 +209,15 @@ check('selectTrackerJobs: Evaluated Workday rows with a PDF, newest first, score
     '| 4 | 2026-10-17 | Hooli | PM | 4.8/5 | Evaluated | ✅ | [004](../reports/004-hooli.md) | |',
     '| 5 | 2026-10-18 | Umbrella | PM | 4.9/5 | Evaluated | ❌ | [005](../reports/005-umbrella.md) | |',
     '| 6 | 2026-10-18 | Stark | PM | 4.9/5 | Evaluated | ✅ | [006](../reports/006-stark.md) | |',
+    '| 7 | 2026-10-14 | Wayne | PM | N/A | Evaluated | ✅ | [007](../reports/007-wayne.md) | |',
   ].join('\n');
-  const urls = { 1: 'https://acme.wd5.myworkdayjobs.com/a/job/1', 2: 'https://globex.wd1.myworkdayjobs.com/g/job/2', 3: 'https://initech.wd1.myworkdayjobs.com/i/job/3', 4: 'https://hooli.wd1.myworkdayjobs.com/h/job/4', 5: 'https://umbrella.wd1.myworkdayjobs.com/u/job/5', 6: 'https://boards.greenhouse.io/stark/jobs/6' };
+  const urls = { 1: 'https://acme.wd5.myworkdayjobs.com/a/job/1', 2: 'https://globex.wd1.myworkdayjobs.com/g/job/2', 3: 'https://initech.wd1.myworkdayjobs.com/i/job/3', 4: 'https://hooli.wd1.myworkdayjobs.com/h/job/4', 5: 'https://umbrella.wd1.myworkdayjobs.com/u/job/5', 7: 'https://wayne.wd1.myworkdayjobs.com/w/job/7', 6: 'https://boards.greenhouse.io/stark/jobs/6' };
   const io = { reportUrl: (n) => urls[n], findPdf: (n) => (n === 5 ? null : `output/${n}.pdf`) };
   const all = selectTrackerJobs(tracker, io);
-  assert.deepEqual(all.jobs.map((j) => j.report), ['4', '2', '1']);
+  assert.deepEqual(all.jobs.map((j) => j.report), ['4', '2', '1', '7']);
   assert.deepEqual(all.skipped, ['#5 Umbrella: no tailored PDF yet']);
   const gated = selectTrackerJobs(tracker, io, { minScore: 4.0 });
-  assert.deepEqual(gated.jobs.map((j) => j.company), ['Hooli', 'Acme']);
+  assert.deepEqual(gated.jobs.map((j) => j.company), ['Hooli', 'Acme', 'Wayne'], 'N/A is not below the bar');
   assert.ok(gated.skipped.some((s) => s.startsWith('#2 Globex')));
 });
 

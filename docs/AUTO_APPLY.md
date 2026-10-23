@@ -61,3 +61,33 @@ Exit code 2 means at least one job did not end as submitted, ready for review, o
 - A tenant that sends a verification email for new accounts pauses the run until you click the link. In headless mode it logs `needs_verification` instead.
 - CAPTCHA and SSO-only tenants are not handled. The job ends as `stuck` or `auth_failed` with a screenshot.
 - Workday tenants customize their questions. The first run against a new company may stop to ask you something. Later runs reuse the answer.
+
+## The daily run: find, tailor, export, apply, track
+
+`daily-job-run.mjs` runs the whole loop in one command:
+
+1. **Scan** for postings from the last `daily.since_days` (default 1): your tracked companies (`scan.mjs`) and every company on the ATSs in `daily.scan_full_ats` (`scan-ats-full.mjs`).
+2. **Evaluate** the newest U.S. leads first, up to `daily.max_evaluations` per run. Leads in obviously non-U.S. places are skipped before any AI time is spent. For each lead, a headless agent (`claude -p`, or `codex exec`) runs the career-ops auto-pipeline: liveness, location, pay floors, blacklist and duplicate checks, the report, and, when the job scores at least `daily.min_score`, a tailored resume rendered with `--max-pages=1 --strict-pages`. Each lead is tried once.
+3. **Export** every new tailored resume to `daily.export_dir` as `<resume_prefix><Job Title>.pdf`. Only one-page PDFs are copied; anything longer is reported instead. When two jobs share a title, the company name is added in brackets. The first run copies only resumes made from that day on; `--export-all` copies the older ones too.
+4. **Apply** with `auto-apply-workday.mjs --from-tracker` to Workday jobs, newest first, up to `daily.apply_limit`.
+5. **Track** by rebuilding `Job-Tracker.csv` in the same folder from `data/applications.md`: date, company, role, score, status, whether it can be auto-applied, the resume file, and the job link. It opens in Excel. If Excel has it open, the run writes `Job-Tracker (latest).csv` instead.
+
+```bash
+node daily-job-run.mjs --dry-run      # show the plan, change nothing
+node daily-job-run.mjs                # everything, stopping each application at Review
+node daily-job-run.mjs --submit       # everything, submitting
+```
+
+The evaluation agent never gets blanket permissions, because job postings are written by strangers and can hide instructions. It may read files and fetch web pages, run this folder's own scripts as `node <script>.mjs` (never `node -e`, and never `auto-apply-workday.mjs` or `daily-job-run.mjs`), and edit files only under `reports/`, `output/`, `data/`, `jds/`, `batch/tracker-additions/`, `interview-prep/` and the temp folder, never the code it runs. Applying and submitting stay with the scripts you start yourself.
+
+If an evaluation reports a permission it was denied that it really needs, add that one rule under `daily.extra_allowed_tools` (for example `- "Bash(git status:*)"`) rather than loosening everything.
+
+### Run it on a schedule (Windows)
+
+From a Command Prompt in the `career-ops` folder, this runs it every morning at 7:55:
+
+```
+schtasks /Create /SC DAILY /ST 07:55 /TN "career-ops daily" /TR "cmd /c cd /d \"%CD%\" && node daily-job-run.mjs --submit >> data\auto-apply\daily.log 2>&1"
+```
+
+Scheduled runs can't ask questions, so a job with a new question is skipped and logged as `needs_input`. Run `node auto-apply-workday.mjs --from-tracker` by hand now and then to answer those questions; each answer is remembered. Remove the schedule with `schtasks /Delete /TN "career-ops daily"`.

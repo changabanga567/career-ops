@@ -69,7 +69,8 @@ Fills a Workday application end to end and stops on the Review page.
   --from-tracker   every Evaluated Workday row in data/applications.md that
                    has a tailored PDF, newest first
   --limit N        with --from-tracker: at most N jobs this run
-  --min-score X    with --from-tracker: skip rows scored below X (e.g. 4.0)
+  --min-score X    with --from-tracker: skip rows scored below X (e.g. 4.0);
+                   unscored (N/A) rows are not skipped
   --submit         click Submit on the Review page (default: stop and wait)
   --headless       run without a visible window (implies --no-prompt)
   --no-prompt      never ask in the terminal; a job with an unanswered
@@ -280,8 +281,10 @@ export function selectTrackerJobs(trackerText, io, { minScore = null } = {}) {
     const url = row.url || (report != null ? io.reportUrl(report) : null);
     const label = `#${row.num} ${row.company}`;
     if (!url || !isWorkdayUrl(url)) continue;
-    const score = parseScore(row.score);
-    if (minScore != null && !(score >= minScore)) { skipped.push(`${label}: score ${row.score || 'none'} < ${minScore}`); continue; }
+    const score = /\d/.test(row.score) ? parseScore(row.score) : null;
+    // Unscored rows (N/A) were prepared without a numeric evaluation; only a
+    // real score below the bar skips a job.
+    if (minScore != null && score != null && score < minScore) { skipped.push(`${label}: score ${row.score} < ${minScore}`); continue; }
     const pdf = report != null ? io.findPdf(report) : null;
     if (!pdf) { skipped.push(`${label}: no tailored PDF yet`); continue; }
     jobs.push({ url, pdf, report: report != null ? String(report) : null, company: row.company, date: row.date, num: row.num });

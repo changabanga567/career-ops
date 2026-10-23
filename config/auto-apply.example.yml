@@ -80,3 +80,17 @@ behavior:
   # Tick "I agree / acknowledge / consent / have read the terms" boxes.
   # Never ticks SMS, marketing, job-alert or preferred-name opt-ins.
   accept_agreements: true
+
+# Daily run (node daily-job-run.mjs): scan → evaluate + tailor → copy resumes
+# → auto-apply on Workday → rebuild Job-Tracker.csv
+daily:
+  export_dir: "~/Desktop/Resumes"   # tailored resumes + Job-Tracker.csv go here
+  resume_prefix: "Resume-"          # → Resume-Technical Project Manager.pdf
+  since_days: 1                     # postings from the last N days first
+  scan_full_ats: [workday, greenhouse, lever, ashby]
+  max_evaluations: 10               # leads the AI evaluates per run
+  min_score: 4.0                    # fit needed for a resume and an application
+  apply_limit: 25                   # Workday applications per run
+  agent_timeout_minutes: 20
+  skip_locations: []                # extra non-U.S. places to ignore
+  # agent: claude                   # or codex; default is CAREER_OPS_CLI
