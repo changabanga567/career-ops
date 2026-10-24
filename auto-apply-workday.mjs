@@ -660,6 +660,15 @@ async function fillDropdown(page, box, answer) {
   return { ok: true, chose: texts[i] };
 }
 
+/** True once a prompt widget really holds a value ("1 item selected", a pill, or a non-empty selection label). */
+async function promptHasSelection(box) {
+  const aria = await box.locator(aid('promptAriaInstruction')).first().innerText().catch(() => '');
+  if (/\b([1-9]\d*) items? selected/i.test(aria)) return true;
+  if (await box.locator(aid('selectedItem')).count()) return true;
+  const label = await box.locator(aid('promptSelectionLabel')).first().innerText().catch(() => '');
+  return Boolean(label.trim());
+}
+
 /** Workday "prompt" widgets (How did you hear, Country phone code…): search, pick, descend at most 3 levels. */
 async function fillPrompt(page, box, answer) {
   const input = box.locator('input').first();
@@ -683,9 +692,8 @@ async function fillPrompt(page, box, answer) {
     }
     const chose = texts[pick];
     await loc.nth(pick).click();
-    await pause(500, 800);
-    const selected = await box.locator('[data-automation-id="selectedItem"], [data-automation-id="promptSelectionLabel"]').count();
-    if (selected) {
+    await pause(700, 1000);
+    if (await promptHasSelection(box)) {
       await page.keyboard.press('Escape').catch(() => {});
       return { ok: true, chose };
     }
@@ -718,16 +726,9 @@ function parseDate(answer) {
 async function fillDate(box, answer) {
   const d = parseDate(answer);
   if (!d) return { ok: false };
-  const part = async (id, value) => {
-    const loc = box.locator(`input${aid(id)}`).first();
-    if (await loc.count()) {
-      await loc.click();
-      await loc.pressSequentially(value, { delay: 40 });
-    }
-  };
-  await part('dateSectionMonth-input', d.mm);
-  await part('dateSectionDay-input', d.dd);
-  await part('dateSectionYear-input', d.yyyy);
+  await typeDateSection(box, 'Month', d.mm);
+  await typeDateSection(box, 'Day', d.dd);
+  await typeDateSection(box, 'Year', d.yyyy);
   return { ok: true, chose: answer };
 }
 
@@ -804,16 +805,29 @@ const WX = {
   end: '[data-automation-id="formField-endDate"]',
 };
 
+/**
+ * Type into one Workday date section. The real <input> sits under a visible
+ * "MM"/"DD"/"YYYY" display div, so focus it by clicking the display (or the
+ * input itself with force) and type on the keyboard.
+ */
+async function typeDateSection(scope, section, value) {
+  const input = scope.locator(`input${aid(`dateSection${section}-input`)}`).first();
+  if (!(await input.count())) return false;
+  const display = scope.locator(aid(`dateSection${section}-display`)).first();
+  if (await display.count()) await display.click({ force: true }).catch(() => {});
+  else await input.click({ force: true }).catch(() => {});
+  await input.focus().catch(() => {});
+  await input.page().keyboard.type(value, { delay: 60 });
+  return true;
+}
+
 async function typeMonthYear(scope, date) {
   if (!date) return false;
-  const month = scope.locator(`input${aid('dateSectionMonth-input')}`).first();
   const year = scope.locator(`input${aid('dateSectionYear-input')}`).first();
-  if (!(await month.count()) || !(await year.count())) return false;
+  if (!(await year.count())) return false;
   if ((await year.inputValue().catch(() => '')).trim()) return true;
-  await month.click();
-  await month.pressSequentially(date.mm, { delay: 40 });
-  await year.click();
-  await year.pressSequentially(date.yyyy, { delay: 40 });
+  await typeDateSection(scope, 'Month', date.mm);
+  await typeDateSection(scope, 'Year', date.yyyy);
   return true;
 }
 
