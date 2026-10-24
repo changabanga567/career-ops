@@ -436,7 +436,7 @@ async function onApplicationStep(page) {
 async function waitForAuthOrStep(page, timeout = 30_000) {
   const deadline = Date.now() + timeout;
   while (Date.now() < deadline) {
-    if (await visible(page.locator(`input${aid('password')}`))) return 'auth';
+    if (await visible(page.locator(`input${aid('password')}, ${aid('SignInWithEmailButton')}`))) return 'auth';
     if (await onApplicationStep(page)) return 'step';
     await pause(500, 700);
   }
@@ -499,7 +499,15 @@ async function signedInAfterAll(page) {
   return (await waitForAuthOrStep(page, 20_000)) === 'step';
 }
 
+/** Tenants with Apple/Google/LinkedIn sign-in hide the email form behind "Sign in with email". */
+async function revealEmailForm(page) {
+  if (await clickAid(page, 'SignInWithEmailButton')) {
+    await page.locator(`input${aid('email')}`).first().waitFor({ timeout: 15_000 }).catch(() => {});
+  }
+}
+
 async function signIn(page, creds) {
+  await revealEmailForm(page);
   if (!(await visible(page.locator(aid('signInSubmitButton'))))) {
     await clickAid(page, ['signInLink', 'utilityButtonSignIn']);
     await settle(page);
@@ -512,6 +520,7 @@ async function signIn(page, creds) {
 }
 
 async function createAccount(page, creds) {
+  await revealEmailForm(page);
   if (!(await visible(page.locator(`input${aid('verifyPassword')}`)))) {
     await clickAid(page, ['createAccountLink']);
     await settle(page);
