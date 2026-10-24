@@ -380,7 +380,10 @@ async function clickAid(page, ids) {
 
 async function settle(page) {
   await page.waitForLoadState('domcontentloaded').catch(() => {});
-  await page.locator(aid('loadingSpinner')).first().waitFor({ state: 'hidden', timeout: 15_000 }).catch(() => {});
+  // Workday shows applyFlowLoadingPage (or a spinner) while a step loads; real tenants take 10s+.
+  for (const id of ['applyFlowLoadingPage', 'loadingSpinner']) {
+    await page.locator(aid(id)).first().waitFor({ state: 'hidden', timeout: 30_000 }).catch(() => {});
+  }
   await pause(600, 1000);
 }
 
@@ -390,16 +393,42 @@ async function pageText(page) {
 
 const CONFIRM_RE = /application (has been |was )?(successfully )?submitted|thank you for (applying|your application|your interest)|successfully applied/i;
 const ALREADY_RE = /you('ve| have) already applied|already submitted an application/i;
+const CLOSED_RE = /page you are looking for (doesn['’]?t|does not) exist|job (posting )?(is )?no longer (available|accepting)|this (job|position|posting|requisition) (has been |is )?(closed|filled|removed|expired)|no longer accepting applications/i;
 const VERIFY_RE = /verify your (email|account)|verification (email|link)|check your (email|inbox)|activate your account/i;
 const AUTH_ERROR_RE = /wrong email|incorrect|invalid (email|password|credentials)|doesn'?t match|not (found|recognized)|account (is )?locked|no account/i;
 
 async function errorTexts(page) {
   const texts = await page.locator(`${aid('errorMessage')}, ${aid('errorBanner')}, [role="alert"]`).allInnerTexts().catch(() => []);
-  return texts.map((t) => t.trim()).filter(Boolean);
+  // Fields Workday marks invalid, by their question label, so a stuck step says what blocked it.
+  const invalid = await page.evaluate(() => [...document.querySelectorAll('[aria-invalid="true"]')]
+    .map((el) => el.closest('[data-automation-id^="formField-"]')?.querySelector('label, legend')?.innerText?.replace(/\s+/g, ' ').trim() || el.getAttribute('aria-label') || el.id)
+    .filter(Boolean)).catch(() => []);
+  const nextDisabled = await page.locator(`${aid('bottom-navigation-next-button')}, ${aid('pageFooterNextButton')}`).first()
+    .evaluate((el) => el.disabled || el.getAttribute('aria-disabled') === 'true').catch(() => false);
+  return [...new Set([...texts.map((t) => t.trim()).filter(Boolean), ...invalid.map((l) => `invalid: ${l}`), ...(nextDisabled ? ['Next button disabled'] : [])])];
 }
 
+async function onAuthStep(page) {
+  if (await visible(page.locator(`${aid('signInContent')}, input${aid('password')}`))) return true;
+  const active = await page.locator(aid('progressBarActiveStep')).first().innerText().catch(() => '');
+  return /sign\s*in|create account/i.test(active);
+}
+
+/** Past the sign-in step: the wizard is showing a real application step. */
 async function onApplicationStep(page) {
+  if (await onAuthStep(page)) return false;
   return (await visible(page.locator(aid('progressBar')))) || (await visible(page.locator(`${aid('bottom-navigation-next-button')}, ${aid('pageFooterNextButton')}`)));
+}
+
+/** Wait until the page shows either a sign-in/create-account form or an application step. */
+async function waitForAuthOrStep(page, timeout = 30_000) {
+  const deadline = Date.now() + timeout;
+  while (Date.now() < deadline) {
+    if (await visible(page.locator(`input${aid('password')}`))) return 'auth';
+    if (await onApplicationStep(page)) return 'step';
+    await pause(500, 700);
+  }
+  return 'timeout';
 }
 
 // ── Start + authenticate ─────────────────────────────────────────────
@@ -407,12 +436,17 @@ async function onApplicationStep(page) {
 async function startApplication(page, url) {
   await page.goto(url, { waitUntil: 'domcontentloaded', timeout: NAV_TIMEOUT });
   await settle(page);
-  if (ALREADY_RE.test(await pageText(page))) return 'already_applied';
+  const landing = await pageText(page);
+  if (ALREADY_RE.test(landing)) return 'already_applied';
+  if (CLOSED_RE.test(landing)) return 'closed';
   if (!(await onApplicationStep(page)) && !(await visible(page.locator(`${aid('email')}, ${aid('signInSubmitButton')}`)))) {
     const clicked = (await clickAid(page, 'adventureButton'))
       || (await page.getByRole('button', { name: /^apply( now)?$/i }).first().click({ timeout: 5000 }).then(() => true, () => false))
       || (await page.getByRole('link', { name: /^apply( now)?$/i }).first().click({ timeout: 5000 }).then(() => true, () => false));
-    if (!clicked) throw new Error('could not find the Apply button — is the posting still open?');
+    if (!clicked) {
+      if (CLOSED_RE.test(await pageText(page))) return 'closed';
+      throw new Error('could not find the Apply button — is the posting still open?');
+    }
     await settle(page);
   }
   // "Start Your Application" modal.
@@ -434,22 +468,30 @@ async function fillCredentials(page, creds, { confirm = false } = {}) {
 }
 
 async function waitAuthOutcome(page) {
-  const deadline = Date.now() + 20_000;
+  // Real tenants can take 20s+ to load the first step after sign-in.
+  const deadline = Date.now() + 60_000;
   while (Date.now() < deadline) {
     if (await onApplicationStep(page)) return 'ok';
     const text = await pageText(page);
     if (VERIFY_RE.test(text)) return 'verify';
-    const errors = await errorTexts(page);
-    if (errors.length || AUTH_ERROR_RE.test(text)) return 'error';
-    await pause(500, 700);
+    const authErrors = await page.locator(`${aid('errorMessage')}, ${aid('errorBanner')}`).allInnerTexts().catch(() => []);
+    if (authErrors.some((t) => t.trim()) || (await onAuthStep(page) && AUTH_ERROR_RE.test(text))) return 'error';
+    await pause(700, 1000);
   }
   return (await onApplicationStep(page)) ? 'ok' : 'timeout';
+}
+
+/** After an auth attempt that did not report ok, let the page finish loading and look again. */
+async function signedInAfterAll(page) {
+  await settle(page);
+  return (await waitForAuthOrStep(page, 20_000)) === 'step';
 }
 
 async function signIn(page, creds) {
   if (!(await visible(page.locator(aid('signInSubmitButton'))))) {
     await clickAid(page, ['signInLink', 'utilityButtonSignIn']);
     await settle(page);
+    await page.locator(aid('signInSubmitButton')).first().waitFor({ timeout: 15_000 }).catch(() => {});
   }
   if (!(await visible(page.locator(`input${aid('password')}`)))) return 'no_form';
   await fillCredentials(page, creds);
@@ -461,6 +503,7 @@ async function createAccount(page, creds) {
   if (!(await visible(page.locator(`input${aid('verifyPassword')}`)))) {
     await clickAid(page, ['createAccountLink']);
     await settle(page);
+    await page.locator(`input${aid('verifyPassword')}`).first().waitFor({ timeout: 15_000 }).catch(() => {});
   }
   if (!(await visible(page.locator(`input${aid('verifyPassword')}`)))) return 'no_form';
   await fillCredentials(page, creds, { confirm: true });
@@ -471,12 +514,12 @@ async function createAccount(page, creds) {
 }
 
 async function authenticate(page, creds, ctx) {
-  if (await onApplicationStep(page)) return;
+  if ((await waitForAuthOrStep(page)) === 'step') return;
   let outcome = await signIn(page, creds);
-  if (outcome === 'ok') return;
+  if (outcome === 'ok' || await signedInAfterAll(page)) return;
   ctx.say(`  sign-in ${outcome}; creating an account on this tenant`);
   outcome = await createAccount(page, creds);
-  if (outcome === 'ok') return;
+  if (outcome === 'ok' || await signedInAfterAll(page)) return;
   if (outcome === 'verify') {
     if (!ctx.prompt) throw Object.assign(new Error('this tenant wants the new account verified by email'), { status: 'needs_verification' });
     await ctx.ask(`  Workday sent a verification email to ${creds.email}. Click the link, then press Enter here… `);
@@ -821,6 +864,7 @@ async function runJob(browser, job, ctx) {
   try {
     const started = await startApplication(page, job.url);
     if (started === 'already_applied') return { status: 'already_applied' };
+    if (started === 'closed') return { status: 'closed', screenshot: await screenshot(page, job.url, 'closed') };
     await authenticate(page, ctx.creds, ctx);
     await settle(page);
 
@@ -875,6 +919,11 @@ async function runJob(browser, job, ctx) {
   } finally {
     await context.close().catch(() => {});
   }
+}
+
+function markClosed(report) {
+  const r = spawnSync(process.execPath, [join(CODE_ROOT, 'set-status.mjs'), '--report', String(report), 'Discarded', '--note', 'posting closed (auto-apply found it gone)'], { encoding: 'utf-8' });
+  return r.status === 0 ? 'tracker: marked Discarded (posting closed)' : `tracker not updated: ${(r.stderr || r.stdout).trim().split('\n')[0]}`;
 }
 
 function markApplied(report) {
@@ -956,6 +1005,7 @@ async function main() {
       ctx.refreshResolver();
       const result = await runJob(browser, job, ctx);
       if (result.status === 'submitted' && job.report) result.tracker = markApplied(job.report);
+      if (result.status === 'closed' && job.report) result.tracker = markClosed(job.report);
       logResult({ url: job.url, report: job.report ?? null, pdf: job.pdfPath, ...result });
       summary.push({ url: job.url, ...result });
       console.log(`  → ${result.status}${result.questions ? `: ${result.questions.join(' · ')}` : ''}${result.errors?.length ? `: ${result.errors.join(' · ')}` : ''}`);
@@ -971,7 +1021,7 @@ async function main() {
   for (const s of summary) console.log(`  ${s.status.padEnd(18)} ${s.url}`);
   const needInput = summary.filter((s) => s.status === 'needs_input');
   if (needInput.length) console.log('\nAdd answers for the questions above to config/auto-apply.yml → questions:, then rerun.');
-  if (summary.some((s) => !['submitted', 'ready_for_review', 'already_applied', 'skipped_duplicate'].includes(s.status))) process.exitCode = 2;
+  if (summary.some((s) => !['submitted', 'ready_for_review', 'already_applied', 'skipped_duplicate', 'closed'].includes(s.status))) process.exitCode = 2;
 }
 
 if (isMainModule(import.meta.url)) {
