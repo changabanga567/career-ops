@@ -39,6 +39,7 @@ import {
   createResolver,
   isAgreementLabel,
   isOptInLabel,
+  ALTERNATIVES,
   normalizeLabel,
   pickOption,
   workdayPasswordProblems,
@@ -727,7 +728,19 @@ async function fillText(page, box, kind, answer) {
   return { ok: true, chose: answer };
 }
 
+/** An answer may list fallbacks ("Career Site || Company Website || LinkedIn"); use the first one the form accepts. */
 async function applyAnswer(page, field, answer) {
+  const choices = String(answer).split(ALTERNATIVES).map((c) => c.trim()).filter(Boolean);
+  if (choices.length <= 1 || ['text', 'textarea', 'date', 'checkbox'].includes(field.kind)) return applyOneAnswer(page, field, choices[0] ?? '');
+  let last = { ok: false };
+  for (const choice of choices) {
+    last = await applyOneAnswer(page, field, choice);
+    if (last.ok) return last;
+  }
+  return last;
+}
+
+async function applyOneAnswer(page, field, answer) {
   const box = page.locator(`[data-ca-field="${field.idx}"]`);
   switch (field.kind) {
     case 'text': case 'textarea': return fillText(page, box, field.kind, answer);

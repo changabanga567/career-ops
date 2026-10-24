@@ -93,6 +93,11 @@ check('previously_employed_at flips the answer for that employer only', () => {
   assert.equal(at(''), 'No');
 });
 
+check('a list answer becomes ordered fallbacks', () => {
+  const r = createResolver({ config: { source: ['Career Site', 'Company Website', 'LinkedIn'] }, profile });
+  assert.equal(r('How did you hear about us?')?.answer, 'Career Site || Company Website || LinkedIn');
+});
+
 check('pickOption: yes/no onto long Workday wording', () => {
   assert.equal(pickOption('Yes', ['Select One', 'Yes', 'No']), 1);
   assert.equal(pickOption('No', ['Yes, I am', 'No, I am not']), 1);
