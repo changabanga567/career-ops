@@ -384,9 +384,12 @@ async function main() {
     const pipelinePath = join(DATA_ROOT, 'data', 'pipeline.md');
     const attempted = new Set(Object.keys(readJson(ATTEMPTED_PATH, {})));
     const nonUs = [...DEFAULT_NON_US, ...[].concat(settings.skip_locations ?? []).map((s) => String(s).toLowerCase())];
-    const { leads, dropped } = rankLeads(existsSync(pipelinePath) ? parsePipeline(readFileSync(pipelinePath, 'utf-8')) : [], { today: localToday(), sinceDays: since, attempted, nonUs });
+    const skipTitleWords = [].concat(settings.skip_title_words ?? []).map(String);
+    const { leads, dropped } = rankLeads(existsSync(pipelinePath) ? parsePipeline(readFileSync(pipelinePath, 'utf-8')) : [], { today: localToday(), sinceDays: since, attempted, nonUs, skipTitleWords });
     const batch = leads.slice(0, maxEval);
-    console.log(`\nPipeline: ${leads.length} lead(s) to evaluate, ${dropped.filter((d) => d.why !== 'already evaluated').length} skipped as outside the U.S.; taking ${batch.length}`);
+    const outside = dropped.filter((d) => /outside the U\.S\.|German-market/.test(d.why)).length;
+    const offTitle = dropped.filter((d) => d.why.startsWith('title has')).length;
+    console.log(`\nPipeline: ${leads.length} lead(s) to evaluate · skipped ${outside} outside the U.S., ${offTitle} by daily.skip_title_words; taking ${batch.length}`);
     for (const lead of batch) console.log(`  ${lead.posted ?? 'undated   '}  ${lead.company} — ${lead.title}${lead.location ? ` (${lead.location})` : ''}`);
     if (!opts.skipEvaluate && !opts.dryRun && batch.length) summary.evaluated = evaluate(batch, settings);
 
