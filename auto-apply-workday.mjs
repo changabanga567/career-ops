@@ -38,6 +38,7 @@ import { atsVendorOf } from './ats-vendor.mjs';
 import {
   createResolver,
   isAgreementLabel,
+  isOptInLabel,
   normalizeLabel,
   pickOption,
   workdayPasswordProblems,
@@ -393,6 +394,7 @@ async function pageText(page) {
 
 const CONFIRM_RE = /application (has been |was )?(successfully )?submitted|thank you for (applying|your application|your interest)|successfully applied/i;
 const ALREADY_RE = /you('ve| have) already applied|already submitted an application/i;
+const WORKDAY_GLITCH_RE = /something went wrong[\s\S]{0,80}refresh the page/i;
 const CLOSED_RE = /page you are looking for (doesn['’]?t|does not) exist|job (posting )?(is )?no longer (available|accepting)|this (job|position|posting|requisition) (has been |is )?(closed|filled|removed|expired)|no longer accepting applications/i;
 const VERIFY_RE = /verify your (email|account)|verification (email|link)|check your (email|inbox)|activate your account/i;
 const AUTH_ERROR_RE = /wrong email|incorrect|invalid (email|password|credentials)|doesn'?t match|not (found|recognized)|account (is )?locked|no account/i;
@@ -549,6 +551,8 @@ function scanFieldsInPage() {
     if (wrap) return text(wrap);
     return input.getAttribute('aria-label') || text(input.parentElement);
   };
+  // Clear tags from an earlier scan: after a re-render two containers could carry one index.
+  for (const old of document.querySelectorAll('[data-ca-field]')) old.removeAttribute('data-ca-field');
   const all = [...document.querySelectorAll('[data-automation-id^="formField-"], fieldset')].filter(isVisible);
   const containers = all.filter((el) => {
     if (el.tagName === 'FIELDSET') {
@@ -827,6 +831,24 @@ async function fillPage(page, ctx) {
   return stillOpen;
 }
 
+/** Untick any SMS / marketing / job-alert / preferred-name box, whatever ticked it. Runs before every Save and Submit. */
+async function clearOptIns(page, ctx) {
+  const boxes = page.locator('input[type="checkbox"]:checked');
+  const n = await boxes.count();
+  for (let i = n - 1; i >= 0; i--) {
+    const box = boxes.nth(i);
+    const label = await box.evaluate((el) => {
+      const own = (el.id && document.querySelector(`label[for="${CSS.escape(el.id)}"]`)) || el.closest('label');
+      const field = el.closest('[data-automation-id^="formField-"]');
+      return [field?.querySelector('[data-automation-id="formLabel"], legend')?.innerText, own?.innerText, el.getAttribute('aria-label')].filter(Boolean).join(' ');
+    }).catch(() => '');
+    if (label && isOptInLabel(label)) {
+      await box.uncheck({ force: true }).catch(() => box.click({ force: true }).catch(() => {}));
+      ctx.say(`  ✗ unticked opt-in: ${label.replace(/\s+/g, ' ').slice(0, 70)}`);
+    }
+  }
+}
+
 async function findSubmit(page) {
   for (const id of ['bottom-navigation-next-button', 'pageFooterNextButton']) {
     const loc = page.locator(aid(id)).first();
@@ -837,7 +859,7 @@ async function findSubmit(page) {
 }
 
 async function clickNext(page) {
-  if (await clickAid(page, ['bottom-navigation-next-button', 'pageFooterNextButton'])) return true;
+  if (await clickAid(page, ['pageFooterNextButton', 'bottom-navigation-next-button'])) return true;
   const btn = page.getByRole('button', { name: /^(save and continue|next|continue)$/i }).first();
   if (await visible(btn)) {
     await btn.click({ force: true });
@@ -870,9 +892,22 @@ async function runJob(browser, job, ctx) {
 
     let lastStep = '';
     let repeats = 0;
+    let refreshes = 0;
     for (let i = 0; i < MAX_STEPS; i++) {
       const text = await pageText(page);
       if (CONFIRM_RE.test(text)) return { status: 'submitted', screenshot: await screenshot(page, job.url, 'submitted') };
+      // Workday's own "Something went wrong — please refresh the page": it keeps
+      // each saved step, so a reload resumes where the application left off.
+      if (WORKDAY_GLITCH_RE.test(text)) {
+        if (refreshes >= 2) return { status: 'stuck', errors: ['Workday kept showing "Something went wrong"'], screenshot: await screenshot(page, job.url, 'workday-error') };
+        refreshes++;
+        ctx.say('  Workday error page — refreshing');
+        await page.reload({ waitUntil: 'domcontentloaded' }).catch(() => {});
+        await settle(page);
+        if (await onAuthStep(page)) await authenticate(page, ctx.creds, ctx);
+        i--;
+        continue;
+      }
       if (ALREADY_RE.test(text)) return { status: 'already_applied' };
 
       const name = await stepName(page);
@@ -884,12 +919,17 @@ async function runJob(browser, job, ctx) {
       }
       lastStep = name;
 
+      // Real tenants render a step's questions seconds after the step loads.
+      await page.locator(`[data-automation-id^="formField-"], input[type="file"], ${aid('pageFooterNextButton')}, ${aid('bottom-navigation-next-button')}`)
+        .first().waitFor({ timeout: 45_000 }).catch(() => {});
+      await pause(2000, 3000);
       await uploadResume(page, job.pdfPath, ctx);
       const open = await fillPage(page, ctx);
       if (open.length) {
         return { status: 'needs_input', step: name, questions: open, screenshot: await screenshot(page, job.url, 'needs-input') };
       }
 
+      await clearOptIns(page, ctx);
       const submit = await findSubmit(page);
       if (submit) {
         const shot = await screenshot(page, job.url, 'review');
@@ -908,6 +948,11 @@ async function runJob(browser, job, ctx) {
         return { status: 'submit_unconfirmed', errors: await errorTexts(page), screenshot: await screenshot(page, job.url, 'submit-unconfirmed') };
       }
 
+      // Let Workday commit the last field before saving the step.
+      await page.keyboard.press('Tab').catch(() => {});
+      await clearOptIns(page, ctx);
+      await pause(1500, 2500);
+      if (WORKDAY_GLITCH_RE.test(await pageText(page))) { i--; continue; }
       if (!(await clickNext(page))) {
         return { status: 'stuck', step: name, errors: ['no Next/Save and Continue button'], screenshot: await screenshot(page, job.url, 'stuck') };
       }
@@ -1031,4 +1076,4 @@ if (isMainModule(import.meta.url)) {
   });
 }
 
-export { normalizeLabel, urlKey, runJob };
+export { normalizeLabel, urlKey, runJob, authenticate, fillPage, startApplication, settle };
