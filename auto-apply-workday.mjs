@@ -41,6 +41,7 @@ import {
   isOptInLabel,
   ALTERNATIVES,
   parseCvExperience,
+  parseCvEducation,
   normalizeLabel,
   pickOption,
   workdayPasswordProblems,
@@ -801,6 +802,8 @@ const WX = {
   title: '[data-automation-id="formField-jobTitle"] input, input[id$="--jobTitle"]',
   company: '[data-automation-id="formField-companyName"] input, input[id$="--companyName"]',
   current: '[data-automation-id="formField-currentlyWorkHere"] input[type="checkbox"], input[type="checkbox"][id$="--currentlyWorkHere"]',
+  location: '[data-automation-id="formField-location"] input, input[id$="--location"]',
+  description: '[data-automation-id="formField-roleDescription"] textarea, textarea[id$="--roleDescription"]',
   start: '[data-automation-id="formField-startDate"]',
   end: '[data-automation-id="formField-endDate"]',
 };
@@ -829,6 +832,12 @@ async function typeMonthYear(scope, date) {
   await typeDateSection(scope, 'Month', date.mm);
   await typeDateSection(scope, 'Year', date.yyyy);
   return true;
+}
+
+/** City for a past job from config work_history.locations ("Company | Title" first, then "Company"). */
+function jobLocation(config, job) {
+  const map = config?.work_history?.locations ?? {};
+  return String(map[`${job.company} | ${job.title}`] ?? map[job.company] ?? '').trim();
 }
 
 /**
@@ -863,6 +872,11 @@ async function fillWorkExperience(page, ctx) {
     const job = jobs[i];
     await titleInput.fill(job.title);
     await entry.locator(WX.company).first().fill(job.company).catch(() => {});
+    const where = jobLocation(ctx.config, job);
+    if (where) await entry.locator(WX.location).first().fill(where).catch(() => {});
+    if (job.bullets?.length) {
+      await entry.locator(WX.description).first().fill(job.bullets.map((b) => `• ${b}`).join('\n').slice(0, 2000)).catch(() => {});
+    }
     if (job.current) await entry.locator(WX.current).first().check({ force: true }).catch(() => {});
     await typeMonthYear(entry.locator(WX.start).first(), job.start);
     if (!job.current) await typeMonthYear(entry.locator(WX.end).first(), job.end);
@@ -1142,10 +1156,11 @@ async function main() {
     prompt: opts.prompt && Boolean(process.stdin.isTTY),
     learned: readLearned(),
     experience: existsSync(join(DATA_ROOT, 'cv.md')) ? parseCvExperience(readFileSync(join(DATA_ROOT, 'cv.md'), 'utf-8')) : [],
+    education: existsSync(join(DATA_ROOT, 'cv.md')) ? parseCvEducation(readFileSync(join(DATA_ROOT, 'cv.md'), 'utf-8')) : null,
     say: (msg) => console.log(msg),
     ask: (q) => (rl ? rl.question(q) : Promise.resolve('')),
   };
-  ctx.refreshResolver = () => { ctx.resolve = createResolver({ config, profile, learned: ctx.learned, employer: ctx.employer }); };
+  ctx.refreshResolver = () => { ctx.resolve = createResolver({ config, profile, learned: ctx.learned, employer: ctx.employer, education: ctx.education }); };
   ctx.refreshResolver();
 
   const { chromium } = await import('playwright');

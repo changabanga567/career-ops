@@ -6,6 +6,7 @@ import { mkdtempSync, mkdirSync, rmSync, utimesSync, writeFileSync } from 'fs';
 import { tmpdir } from 'os';
 import { join } from 'path';
 import {
+  parseCvEducation,
   parseCvExperience,
   createResolver,
   isAgreementLabel,
@@ -243,8 +244,21 @@ check('parseCvExperience reads jobs, titles, dates and "Present" from cv.md', ()
     '## Skills', '### NotAJob', '**x**', '2020 – 2021',
   ].join('\n');
   assert.deepEqual(parseCvExperience(cv), [
-    { company: 'Acme', title: 'Project Manager', start: { mm: '02', yyyy: '2025' }, end: null, current: true },
-    { company: 'Beta Corp', title: 'Operations Manager', start: { mm: '09', yyyy: '2021' }, end: { mm: '01', yyyy: '2025' }, current: false },
+    { company: 'Acme', title: 'Project Manager', start: { mm: '02', yyyy: '2025' }, end: null, current: true, bullets: ['did things in 2023'] },
+    { company: 'Beta Corp', title: 'Operations Manager', start: { mm: '09', yyyy: '2021' }, end: { mm: '01', yyyy: '2025' }, current: false, bullets: [] },
   ]);
   assert.deepEqual(parseCvExperience('# CV\nno experience heading'), []);
+});
+
+check('parseCvEducation picks the degree entry, skips non-degree programs', () => {
+  const cv = '## Education\nStanford University\nCybersecurity Program\nFlorida International University\nBachelor of Science, Computer Science\n- Dean\'s List\n## Other';
+  const ed = parseCvEducation(cv);
+  assert.equal(ed.school, 'Florida International University');
+  assert.equal(ed.field, 'Computer Science');
+  assert.ok(ed.degree.startsWith("Bachelor's Degree || "));
+  const r = createResolver({ config: {}, profile, education: ed });
+  assert.equal(r('School or University')?.answer, 'Florida International University');
+  assert.equal(r('Field of Study')?.answer, 'Computer Science');
+  assert.equal(r('Do you have a degree?'), null, 'a yes/no degree question is not the Degree field');
+  assert.equal(parseCvEducation('# CV'), null);
 });
