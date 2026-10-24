@@ -120,6 +120,15 @@ check('pickOption: partial and token matches, no wild guesses', () => {
   assert.equal(pickOption('', ['Yes']), -1);
 });
 
+check('pickOption never matches on a shared generic word like "degree"', () => {
+  const degrees = ['High School Diploma', 'Associates Degree', 'Bachelors', 'Masters Degree'];
+  assert.equal(pickOption("Bachelor's Degree", degrees), 2, 'apostrophes ignored; "degree" alone never matches Associates');
+  assert.equal(pickOption("Bachelor's Degree", ['High School Diploma', 'Associates Degree']), -1);
+  assert.equal(pickOption('Bachelors Degree', degrees), 2);
+  assert.equal(pickOption("Bachelor's Degree", ["Associate's Degree", "Bachelor's Degree", "Master's Degree"]), 1);
+  assert.equal(pickOption('Computer Science', ['Computer and Information Science', 'Business']), 0);
+});
+
 check('agreement checkboxes are ticked, opt-ins are not', () => {
   assert.ok(isAgreementLabel('I have read and agree to the Terms and Conditions'));
   assert.ok(isAgreementLabel('I acknowledge the Privacy Notice'));

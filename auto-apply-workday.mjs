@@ -896,7 +896,13 @@ async function fillPage(page, ctx) {
     const fields = await page.evaluate(scanFieldsInPage);
     for (const field of fields) {
       if (field.kind === 'file' || field.kind === 'unknown') continue;
-      if (field.value) continue;
+      if (field.value && field.kind !== 'checkbox') {
+        // Keep a value Workday or an earlier run filled, unless it contradicts our answer (a draft can hold a wrong pick).
+        const mine = ['dropdown', 'radio', 'select'].includes(field.kind) ? ctx.resolve(field.label) : null;
+        const wanted = mine?.answer ? mine.answer.split(ALTERNATIVES) : [];
+        if (!wanted.length || wanted.some((w) => pickOption(w, [field.value]) !== -1)) continue;
+        ctx.say(`  ! "${field.label.slice(0, 50)}" was "${field.value}", correcting`);
+      } else if (field.value) continue;
       if (field.kind === 'checkbox') {
         const resolved = ctx.resolve(field.label);
         if ((ctx.config.behavior?.accept_agreements !== false && isAgreementLabel(field.label)) || /^(yes|true)$/i.test(resolved?.answer ?? '')) {
