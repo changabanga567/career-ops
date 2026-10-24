@@ -6,6 +6,7 @@ import { mkdtempSync, mkdirSync, rmSync, utimesSync, writeFileSync } from 'fs';
 import { tmpdir } from 'os';
 import { join } from 'path';
 import {
+  parseCvExperience,
   createResolver,
   isAgreementLabel,
   pickOption,
@@ -232,4 +233,18 @@ check('--from-tracker needs no --url; --limit validated', () => {
   assert.equal(opts.limit, 5);
   assert.equal(opts.minScore, 4);
   assert.throws(() => parseCli(['--from-tracker', '--limit', '0']), /positive/);
+});
+
+check('parseCvExperience reads jobs, titles, dates and "Present" from cv.md', () => {
+  const cv = [
+    '# CV', '## Professional Summary', 'text', '## Work Experience',
+    '### Acme -- Austin, TX', '**Project Manager**', 'Feb. 2025 – Present', '- did things in 2023',
+    '### Beta Corp', '**Operations Manager**', 'Sept. 2021 – Jan. 2025',
+    '## Skills', '### NotAJob', '**x**', '2020 – 2021',
+  ].join('\n');
+  assert.deepEqual(parseCvExperience(cv), [
+    { company: 'Acme', title: 'Project Manager', start: { mm: '02', yyyy: '2025' }, end: null, current: true },
+    { company: 'Beta Corp', title: 'Operations Manager', start: { mm: '09', yyyy: '2021' }, end: { mm: '01', yyyy: '2025' }, current: false },
+  ]);
+  assert.deepEqual(parseCvExperience('# CV\nno experience heading'), []);
 });

@@ -40,6 +40,7 @@ import {
   isAgreementLabel,
   isOptInLabel,
   ALTERNATIVES,
+  parseCvExperience,
   normalizeLabel,
   pickOption,
   workdayPasswordProblems,
@@ -784,6 +785,72 @@ async function askUser(field, ctx) {
   return answer;
 }
 
+// ── Work experience (from cv.md) ─────────────────────────────────────
+
+const WX = {
+  title: '[data-automation-id="formField-jobTitle"] input, input[id$="--jobTitle"]',
+  company: '[data-automation-id="formField-companyName"] input, input[id$="--companyName"]',
+  current: '[data-automation-id="formField-currentlyWorkHere"] input[type="checkbox"], input[type="checkbox"][id$="--currentlyWorkHere"]',
+  start: '[data-automation-id="formField-startDate"]',
+  end: '[data-automation-id="formField-endDate"]',
+};
+
+async function typeMonthYear(scope, date) {
+  if (!date) return false;
+  const month = scope.locator(`input${aid('dateSectionMonth-input')}`).first();
+  const year = scope.locator(`input${aid('dateSectionYear-input')}`).first();
+  if (!(await month.count()) || !(await year.count())) return false;
+  if ((await year.inputValue().catch(() => '')).trim()) return true;
+  await month.click();
+  await month.pressSequentially(date.mm, { delay: 40 });
+  await year.click();
+  await year.pressSequentially(date.yyyy, { delay: 40 });
+  return true;
+}
+
+/**
+ * Fill Workday's Work Experience section from cv.md: one entry per job,
+ * newest first, adding entries with the section's Add button as needed.
+ * Entries that already have a job title (Workday's resume parse) are left as they are.
+ */
+async function fillWorkExperience(page, ctx) {
+  const jobs = ctx.experience ?? [];
+  if (!jobs.length) return 0;
+  const titleInputs = page.locator(WX.title);
+  const addButton = page.getByRole('button', { name: /^\s*add( another)?\s*$/i });
+  // The Add button that belongs to the Work Experience section.
+  const sectionAdd = page.locator('xpath=//*[self::h2 or self::h3 or self::h4 or self::legend][normalize-space()="Work Experience"]/ancestor::*[.//button][1]//button')
+    .filter({ hasText: /^\s*add( another)?\s*$/i }).first();
+  const hasSection = (await titleInputs.count()) > 0 || (await sectionAdd.isVisible().catch(() => false));
+  if (!hasSection) return 0;
+  let filled = 0;
+  for (let i = 0; i < jobs.length; i++) {
+    if ((await titleInputs.count()) <= i) {
+      const add = (await sectionAdd.isVisible().catch(() => false)) ? sectionAdd : addButton.last();
+      if (!(await add.isVisible().catch(() => false))) break;
+      await add.click({ force: true });
+      await page.waitForFunction((n) => document.querySelectorAll('[data-automation-id="formField-jobTitle"] input, input[id$="--jobTitle"]').length > n, i, { timeout: 10_000 }).catch(() => {});
+      await pause(500, 800);
+      if ((await titleInputs.count()) <= i) break;
+    }
+    const titleInput = titleInputs.nth(i);
+    if ((await titleInput.inputValue().catch(() => '')).trim()) continue;
+    // The entry is the nearest ancestor that holds exactly this one job-title field.
+    const entry = titleInput.locator('xpath=ancestor::*[count(.//input[contains(@id,"--jobTitle")] | .//*[@data-automation-id="formField-jobTitle"]//input) = 1][last()]');
+    const job = jobs[i];
+    await titleInput.fill(job.title);
+    await entry.locator(WX.company).first().fill(job.company).catch(() => {});
+    if (job.current) await entry.locator(WX.current).first().check({ force: true }).catch(() => {});
+    await typeMonthYear(entry.locator(WX.start).first(), job.start);
+    if (!job.current) await typeMonthYear(entry.locator(WX.end).first(), job.end);
+    await page.keyboard.press('Tab').catch(() => {});
+    filled++;
+    ctx.say(`  work experience ${i + 1}: ${job.title}, ${job.company} (${job.start.mm}/${job.start.yyyy}–${job.current ? 'present' : `${job.end?.mm}/${job.end?.yyyy}`})`);
+    await pause();
+  }
+  return filled;
+}
+
 /** Fill every question on the current step. Returns labels still unanswered and required. */
 async function fillPage(page, ctx) {
   const unanswered = [];
@@ -945,6 +1012,7 @@ async function runJob(browser, job, ctx) {
         .first().waitFor({ timeout: 45_000 }).catch(() => {});
       await pause(2000, 3000);
       await uploadResume(page, job.pdfPath, ctx);
+      await fillWorkExperience(page, ctx);
       const open = await fillPage(page, ctx);
       if (open.length) {
         return { status: 'needs_input', step: name, questions: open, screenshot: await screenshot(page, job.url, 'needs-input') };
@@ -1050,6 +1118,7 @@ async function main() {
     headless: opts.headless,
     prompt: opts.prompt && Boolean(process.stdin.isTTY),
     learned: readLearned(),
+    experience: existsSync(join(DATA_ROOT, 'cv.md')) ? parseCvExperience(readFileSync(join(DATA_ROOT, 'cv.md'), 'utf-8')) : [],
     say: (msg) => console.log(msg),
     ask: (q) => (rl ? rl.question(q) : Promise.resolve('')),
   };
