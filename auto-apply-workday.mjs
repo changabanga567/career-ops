@@ -354,6 +354,11 @@ async function screenshot(page, url, tag) {
   const host = (() => { try { return new URL(url).hostname.split('.')[0]; } catch { return 'job'; } })();
   const file = join(SHOTS_DIR, `${new Date().toISOString().replace(/[:.]/g, '-')}-${host}-${tag}.png`);
   await page.screenshot({ path: file, fullPage: true }).catch(() => {});
+  // The page markup beside the picture, so a new tenant layout can be diagnosed without re-running.
+  if (tag !== 'review' && tag !== 'submitted') {
+    const html = await page.content().catch(() => '');
+    if (html) writeFileSync(file.replace(/\.png$/, '.html'), html);
+  }
   return file;
 }
 
@@ -381,6 +386,9 @@ async function clickAid(page, ids) {
 
 async function settle(page) {
   await page.waitForLoadState('domcontentloaded').catch(() => {});
+  // Cookie banners hide the step's buttons on some tenants.
+  const cookies = page.locator(aid('legalNoticeAcceptButton')).first();
+  if (await cookies.isVisible().catch(() => false)) await cookies.click({ force: true }).catch(() => {});
   // Workday shows applyFlowLoadingPage (or a spinner) while a step loads; real tenants take 10s+.
   for (const id of ['applyFlowLoadingPage', 'loadingSpinner']) {
     await page.locator(aid(id)).first().waitFor({ state: 'hidden', timeout: 30_000 }).catch(() => {});
