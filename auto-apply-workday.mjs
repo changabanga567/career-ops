@@ -775,15 +775,27 @@ async function visibleOptions(page) {
 async function fillDropdown(page, box, answer) {
   const button = box.locator('button[aria-haspopup="listbox"]').first();
   // Selected-value chips of prompt widgets ("United States of America (+1)") are also role=listbox: ignore them.
-  const LIST = '[role="listbox"]:not([data-automation-id="selectedItemList"])';
+  // Lists marked stale are another question's popup that would not close (see below).
+  const LIST = '[role="listbox"]:not([data-automation-id="selectedItemList"]):not([data-ca-stale])';
   const OPTION = `${LIST} [role="option"]:visible`;
   const listOpen = () => page.locator(OPTION).count().then((n) => n > 0, () => false);
+  // A stale mark only holds while that popup stays on screen; Workday reuses popup nodes.
+  await page.evaluate(() => document.querySelectorAll('[data-ca-stale]').forEach((el) => {
+    if (!el.getClientRects().length) el.removeAttribute('data-ca-stale');
+  })).catch(() => {});
   // The previous dropdown's list can still be on screen while it closes; wait it out first.
   const anyList = page.locator(`${LIST}:visible`);
   if (await anyList.count()) {
     await page.keyboard.press('Escape').catch(() => {});
     await anyList.first().waitFor({ state: 'hidden', timeout: 3000 }).catch(() => {});
   }
+  if (await anyList.count()) {
+    // A prompt's popup ("How did you hear about us?") can ignore Escape; clicking outside closes it.
+    await box.locator(`${aid('formLabel')}, label, legend`).first().click({ timeout: 3000 }).catch(() => {});
+    await anyList.first().waitFor({ state: 'hidden', timeout: 3000 }).catch(() => {});
+  }
+  // Still open: leave it out, so this dropdown never reads (or scrolls) another question's options.
+  await anyList.evaluateAll((els) => els.forEach((el) => el.setAttribute('data-ca-stale', '1'))).catch(() => {});
   // A click can toggle a half-open list shut; make sure this one is open before reading it.
   for (let attempt = 0; attempt < 3 && !(await listOpen()); attempt++) {
     await button.click({ timeout: 8000 }).catch(() => button.click({ force: true }).catch(() => {}));
