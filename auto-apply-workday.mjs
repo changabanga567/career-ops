@@ -699,9 +699,15 @@ async function visibleOptions(page) {
 async function fillDropdown(page, box, answer) {
   const button = box.locator('button[aria-haspopup="listbox"]').first();
   const listOpen = () => page.locator('[role="listbox"] [role="option"]:visible').count().then((n) => n > 0, () => false);
-  // A click can toggle a half-open list shut; make sure it is open before reading it.
+  // The previous dropdown's list can still be on screen while it closes; wait it out first.
+  const anyList = page.locator('[role="listbox"]:visible');
+  if (await anyList.count()) {
+    await page.keyboard.press('Escape').catch(() => {});
+    await anyList.first().waitFor({ state: 'hidden', timeout: 3000 }).catch(() => {});
+  }
+  // A click can toggle a half-open list shut; make sure this one is open before reading it.
   for (let attempt = 0; attempt < 3 && !(await listOpen()); attempt++) {
-    await button.click();
+    await button.click({ timeout: 8000 }).catch(() => button.click({ force: true }).catch(() => {}));
     await pause(300, 600);
   }
   const choices = String(answer).split(ALTERNATIVES).map((c) => c.trim()).filter(Boolean);
@@ -740,7 +746,13 @@ async function fillDropdown(page, box, answer) {
     return { ok: false, options: [...seen] };
   }
   await loc.nth(i).scrollIntoViewIfNeeded().catch(() => {});
-  await loc.nth(i).click();
+  try {
+    await loc.nth(i).click({ timeout: 8000 });
+  } catch {
+    await page.keyboard.press('Escape').catch(() => {});
+    return { ok: false, options: [...seen] };
+  }
+  await anyList.first().waitFor({ state: 'hidden', timeout: 3000 }).catch(() => {});
   return { ok: true, chose: texts[i] };
 }
 
