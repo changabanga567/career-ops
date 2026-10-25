@@ -1091,14 +1091,32 @@ function jobLocation(config, job) {
  * newest first, adding entries with the section's Add button as needed.
  * Entries that already have a job title (Workday's resume parse) are left as they are.
  */
+/** An empty Education section shows only an Add button; open one entry so the field pass fills school, degree and field from cv.md. */
+async function openEducationEntry(page, ctx) {
+  const group = page.locator('[aria-labelledby="Education-section"]');
+  if (!(await group.count())) return false;
+  if (await group.locator('input, button[aria-haspopup="listbox"]').count()) return false;
+  const add = group.locator(aid('add-button')).first();
+  if (!(await add.isVisible().catch(() => false))) return false;
+  await add.click({ force: true });
+  await group.locator('input, button[aria-haspopup="listbox"]').first().waitFor({ timeout: 10_000 }).catch(() => {});
+  await pause(500, 800);
+  ctx.say('  education: opened an entry');
+  return true;
+}
+
 async function fillWorkExperience(page, ctx) {
   const jobs = ctx.experience ?? [];
   if (!jobs.length) return 0;
   const titleInputs = page.locator(WX.title);
   const addButton = page.getByRole('button', { name: /^\s*add( another)?\s*$/i });
   // The Add button that belongs to the Work Experience section.
-  const sectionAdd = page.locator('xpath=//*[self::h2 or self::h3 or self::h4 or self::legend][normalize-space()="Work Experience"]/ancestor::*[.//button][1]//button')
+  // Workday labels each My Experience section group; once entries exist, the nearest
+  // ancestor of the heading holds only their Delete buttons, so look inside the group.
+  const groupAdd = page.locator(`[aria-labelledby="Work-Experience-section"] ${aid('add-button')}`).last();
+  const headingAdd = page.locator('xpath=//*[self::h2 or self::h3 or self::h4 or self::legend][normalize-space()="Work Experience"]/ancestor::*[.//button][1]//button')
     .filter({ hasText: /^\s*add( another)?\s*$/i }).first();
+  const sectionAdd = (await groupAdd.count()) ? groupAdd : headingAdd;
   const hasSection = (await titleInputs.count()) > 0 || (await sectionAdd.isVisible().catch(() => false));
   if (!hasSection) return 0;
   let filled = 0;
@@ -1397,6 +1415,7 @@ async function runJob(browser, job, ctx) {
       await pause(2000, 3000);
       await uploadResume(page, job.pdfPath, ctx);
       await fillWorkExperience(page, ctx);
+      await openEducationEntry(page, ctx);
       const open = await fillPage(page, ctx);
       if (open.length) {
         return { status: 'needs_input', step: name, questions: open, screenshot: await screenshot(page, job.url, 'needs-input') };
