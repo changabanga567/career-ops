@@ -697,21 +697,43 @@ async function visibleOptions(page) {
 }
 
 async function fillDropdown(page, box, answer) {
-  await box.locator('button[aria-haspopup="listbox"]').first().click();
-  await pause(300, 600);
-  let { loc, texts } = await visibleOptions(page);
-  let i = pickOption(answer, texts);
+  const button = box.locator('button[aria-haspopup="listbox"]').first();
+  const listOpen = () => page.locator('[role="listbox"] [role="option"]:visible').count().then((n) => n > 0, () => false);
+  // A click can toggle a half-open list shut; make sure it is open before reading it.
+  for (let attempt = 0; attempt < 3 && !(await listOpen()); attempt++) {
+    await button.click();
+    await pause(300, 600);
+  }
+  const choices = String(answer).split(ALTERNATIVES).map((c) => c.trim()).filter(Boolean);
+  const read = async () => {
+    const loc = page.locator('[role="listbox"] [role="option"]:visible');
+    return { loc, texts: (await loc.allInnerTexts().catch(() => [])).map((t) => t.replace(/\s+/g, ' ').trim()) };
+  };
+  const pick = (texts) => {
+    for (const c of choices) {
+      const i = pickOption(c, texts);
+      if (i !== -1) return i;
+    }
+    return -1;
+  };
+  let { loc, texts } = await read();
+  let i = pick(texts);
   const seen = new Set(texts);
-  // Long lists render only the options near the current value: scroll through the rest.
+  // Long lists may render only the options near the current value: scroll through the rest.
   const list = page.locator('[role="listbox"]:visible').last();
-  for (let top = 0; i === -1 && (await list.count()); ) {
-    const more = await list.evaluate((el, y) => { el.scrollTop = y; return el.scrollTop + el.clientHeight < el.scrollHeight; }, top).catch(() => false);
+  for (let top = 0; i === -1 && (await list.count()); top += 250) {
+    const more = await list.evaluate((el, y) => {
+      let s = el;
+      while (s && s.scrollHeight <= s.clientHeight) s = s.parentElement;
+      if (!s) return false;
+      s.scrollTop = y;
+      return s.scrollTop + s.clientHeight < s.scrollHeight;
+    }, top).catch(() => false);
     await pause(150, 250);
-    ({ loc, texts } = await visibleOptions(page));
+    ({ loc, texts } = await read());
     texts.forEach((t) => seen.add(t));
-    i = pickOption(answer, texts);
+    i = pick(texts);
     if (!more) break;
-    top += 250;
   }
   if (i === -1) {
     await page.keyboard.press('Escape');
@@ -818,6 +840,8 @@ async function tick(locator) {
 async function applyAnswer(page, field, answer) {
   const choices = String(answer).split(ALTERNATIVES).map((c) => c.trim()).filter(Boolean);
   if (choices.length <= 1 || ['text', 'textarea', 'date', 'checkbox'].includes(field.kind)) return applyOneAnswer(page, field, choices[0] ?? '');
+  // A dropdown tries every acceptable answer against one open list.
+  if (field.kind === 'dropdown') return applyOneAnswer(page, field, answer);
   let last = { ok: false };
   for (const choice of choices) {
     last = await applyOneAnswer(page, field, choice);
