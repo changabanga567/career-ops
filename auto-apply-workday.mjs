@@ -1393,7 +1393,14 @@ async function main() {
       }
       ctx.employer = job.company || (() => { try { return new URL(job.url).hostname.split('.')[0]; } catch { return ''; } })();
       ctx.refreshResolver();
-      const result = await runJob(browser, job, ctx);
+      let result = await runJob(browser, job, ctx);
+      // A draft reopened after a Workday error page can keep Save disabled for the rest of that
+      // browser session; a clean session resumes it normally.
+      if (result.status === 'stuck' && (result.errors ?? []).some((e) => /next button disabled|no next/i.test(e))) {
+        console.log('  stuck in this session — retrying once in a fresh browser session');
+        await pause(3000, 5000);
+        result = await runJob(browser, job, ctx);
+      }
       if (result.status === 'submitted' && job.report) result.tracker = markApplied(job.report, result.screenshot);
       if (result.status === 'closed' && job.report) result.tracker = markClosed(job.report);
       logResult({ url: job.url, report: job.report ?? null, pdf: job.pdfPath, ...result });
