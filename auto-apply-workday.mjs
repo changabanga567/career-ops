@@ -796,6 +796,14 @@ async function uploadResume(page, pdfPath, ctx) {
   if (!(await input.count())) return false;
   const already = await page.locator(`${aid('file-upload-item')}, ${aid('file-upload-successful')}`).count();
   if (already && ctx.uploaded) return false;
+  // A saved draft keeps the resume from an earlier run; remove it so only the current tailored PDF is attached.
+  for (let n = 0; n < 5; n++) {
+    const del = page.locator(`${aid('file-upload-item')} ${aid('delete-file')}`).first();
+    if (!(await del.isVisible().catch(() => false))) break;
+    await del.click({ force: true });
+    await pause(800, 1200);
+    ctx.say('  removed a previously attached file');
+  }
   await input.setInputFiles(pdfPath);
   ctx.uploaded = true;
   ctx.say(`  uploaded ${pdfPath.replace(`${DATA_ROOT}/`, '')}`);
