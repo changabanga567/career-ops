@@ -726,7 +726,8 @@ async function main() {
       ctx.uploadName = resumeFileName(prefix, job.role);
       ctx.prefix = prefix;
       ctx.role = job.role;
-      ctx.coverPath = job.cover ? resolve(DATA_ROOT, job.cover) : findCoverPdf(job.report);
+      // Resume only: the candidate does not send cover letters (2026-10-25).
+      ctx.coverPath = null;
       ctx.refreshResolver();
       const result = await runAtsJob(browser, job, ctx);
       const via = { greenhouse: 'Greenhouse', lever: 'Lever', ashby: 'Ashby' }[ctx.vendor];

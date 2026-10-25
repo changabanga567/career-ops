@@ -746,11 +746,14 @@ async function fillDropdown(page, box, answer) {
     await page.keyboard.press('Escape');
     return { ok: false, options: [...seen] };
   }
-  // Click by text, not position: the list can re-render between reading and clicking.
+  // Click by text, not position: the list can re-render between reading and clicking,
+  // so look the option up again by its visible text right before the click.
   const want = texts[i];
-  const target = page.locator('[role="listbox"] [role="option"]:visible').filter({ hasText: want })
-    .filter({ hasText: new RegExp(`^\\s*${want.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}\\s*$`) }).first();
   try {
+    const now = await read();
+    const j = now.texts.indexOf(want);
+    if (j === -1) throw new Error('option moved');
+    const target = now.loc.nth(j);
     await target.scrollIntoViewIfNeeded().catch(() => {});
     await target.click({ timeout: 8000 });
   } catch {
@@ -758,9 +761,9 @@ async function fillDropdown(page, box, answer) {
     return { ok: false, options: [...seen] };
   }
   await anyList.first().waitFor({ state: 'hidden', timeout: 3000 }).catch(() => {});
-  // Verify the dropdown now shows what was meant.
-  const shown = (await button.innerText().catch(() => '')).replace(/\s+/g, ' ').trim();
-  if (shown && shown !== want) return { ok: false, options: [...seen], error: `picked "${shown}" instead of "${want}"` };
+  // Verify the dropdown shows what was meant (its label may carry extra text around it).
+  const shown = normalizeLabel(await button.innerText().catch(() => ''));
+  if (shown && !shown.includes(normalizeLabel(want))) return { ok: false, options: [...seen], error: `picked "${shown}" instead of "${want}"` };
   return { ok: true, chose: want };
 }
 
