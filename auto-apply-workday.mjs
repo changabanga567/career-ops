@@ -1193,14 +1193,11 @@ async function runJob(browser, job, ctx) {
       if (WORKDAY_GLITCH_RE.test(text)) {
         if (refreshes >= 2) return { status: 'stuck', errors: ['Workday kept showing "Something went wrong"'], screenshot: await screenshot(page, job.url, 'workday-error') };
         refreshes++;
-        ctx.say('  Workday error page — refreshing');
-        await page.reload({ waitUntil: 'domcontentloaded' }).catch(() => {});
+        ctx.say('  Workday error page — reopening the application');
+        // A plain reload can leave an empty shell or a form whose Next stays disabled:
+        // start again from the posting, which resumes the saved draft.
+        await startApplication(page, job.url).catch(() => {});
         await settle(page);
-        // Some tenants reload the apply URL to an empty shell: start again from the posting.
-        if ((await waitForAuthOrStep(page, 20_000)) === 'timeout') {
-          await startApplication(page, job.url);
-          await settle(page);
-        }
         if (await onAuthStep(page)) await authenticate(page, ctx.creds, ctx);
         i--;
         continue;
