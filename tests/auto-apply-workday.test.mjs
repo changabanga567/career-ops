@@ -304,3 +304,9 @@ check('SMS notification preferences count as opt-ins', () => {
   assert.ok(isOptInLabel('Select your preference to receive notification updates regarding the application. Message and data rates may apply.'));
   assert.ok(!isAgreementLabel('Your consent is not a condition of your application. Message and data rates may apply.'));
 });
+
+check('"aptitude" in a company list is not an apartment number', () => {
+  const r = createResolver({ config: {}, profile });
+  assert.equal(r('Have you ever worked for any Vizient companies? They include Sg2, aptitude, Apexus and Provista.')?.key, 'previously_employed');
+  assert.equal(r('Apt, Suite, etc.')?.key ?? 'none', 'none', 'blank address line 2 has no answer');
+});
