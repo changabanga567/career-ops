@@ -25,13 +25,14 @@
  */
 
 import { appendFileSync, existsSync, mkdirSync, readFileSync, readdirSync, statSync, writeFileSync } from 'fs';
-import { dirname, join, resolve } from 'path';
+import { basename, dirname, join, resolve } from 'path';
 import { spawnSync } from 'child_process';
 import { createInterface } from 'readline/promises';
 import { fileURLToPath } from 'url';
 import { loadYaml } from './lib/yaml-document.mjs';
 import { isMainModule } from './lib/is-main-module.mjs';
 import { localToday } from './lib/local-today.mjs';
+import { resumeFileName } from './lib/daily-run.mjs';
 import { getCareerOpsRoot, getProfilePath, resolveTrackerPath } from './path-resolver.mjs';
 import { linkedReportNumbers, parseScore, parseTrackerRow, resolveColumns } from './tracker-parse.mjs';
 import { freshLaunchOptions } from './apply-scope.mjs';
@@ -292,7 +293,7 @@ export function selectTrackerJobs(trackerText, io, { minScore = null } = {}) {
     if (minScore != null && score != null && score < minScore) { skipped.push(`${label}: score ${row.score} < ${minScore}`); continue; }
     const pdf = report != null ? io.findPdf(report) : null;
     if (!pdf) { skipped.push(`${label}: no tailored PDF yet`); continue; }
-    jobs.push({ url, pdf, report: report != null ? String(report) : null, company: row.company, date: row.date, num: row.num });
+    jobs.push({ url, pdf, report: report != null ? String(report) : null, company: row.company, role: row.role, date: row.date, num: row.num });
   }
   jobs.sort((a, b) => String(b.date).localeCompare(String(a.date)) || b.num - a.num);
   return { jobs, skipped };
@@ -805,7 +806,9 @@ async function uploadResume(page, pdfPath, ctx) {
     await pause(800, 1200);
     ctx.say('  removed a previously attached file');
   }
-  await input.setInputFiles(pdfPath);
+  // Upload under the candidate's own name ("EbaadG-Program Manager.pdf"), which recruiters see, not the internal output name.
+  const name = ctx.uploadName || basename(pdfPath);
+  await input.setInputFiles({ name, mimeType: 'application/pdf', buffer: readFileSync(pdfPath) });
   ctx.uploaded = true;
   ctx.say(`  uploaded ${pdfPath.replace(`${DATA_ROOT}/`, '')}`);
   await page.locator(`${aid('file-upload-successful')}, ${aid('file-upload-item')}`).first().waitFor({ timeout: 30_000 }).catch(() => {});
@@ -1064,6 +1067,7 @@ async function runJob(browser, job, ctx) {
   const page = await context.newPage();
   page.setDefaultTimeout(15_000);
   ctx.uploaded = false;
+  ctx.uploadName = job.role ? resumeFileName(ctx.config.daily?.resume_prefix ?? '', job.role) : null;
   const keepOpen = () => !ctx.headless && ctx.prompt;
   try {
     const started = await startApplication(page, job.url);
