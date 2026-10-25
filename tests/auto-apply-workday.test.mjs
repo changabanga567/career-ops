@@ -10,6 +10,7 @@ import {
   parseCvExperience,
   createResolver,
   isAgreementLabel,
+  isOptInLabel,
   pickOption,
   splitName,
   workdayPasswordProblems,
@@ -277,4 +278,29 @@ check('parseCvEducation picks the degree entry, skips non-degree programs', () =
   assert.equal(r('Field of Study')?.answer, 'Computer Science');
   assert.equal(r('Do you have a degree?'), null, 'a yes/no degree question is not the Degree field');
   assert.equal(parseCvEducation('# CV'), null);
+});
+
+check('loose word overlap is not a match: "Career Site" never picks "Career fair"', () => {
+  assert.equal(pickOption('Career Site', ['Career fair', 'LinkedIn corporate page', 'Company Website']), -1);
+  assert.equal(pickOption('Company Career Site', ['Career fair', 'Company Career Site']), 1);
+  assert.equal(pickOption("Bachelor's Degree", ['Associates', 'Bachelors (±16 years of education)']), 1);
+  assert.equal(pickOption('Computer Science', ['Computer Science and Mathematics', 'Computer Science']), 1);
+});
+
+check('the phone-extension skip rule does not swallow "extension of immigration status"', () => {
+  const r = createResolver({ config: { work_authorization: { needs_sponsorship: 'No' } }, profile });
+  assert.equal(r('Will you require sponsorship (including H-1B or a change or extension of immigration status)?')?.answer, 'No');
+  assert.equal(r('Extension')?.source, 'skip');
+  assert.equal(r('Middle Name')?.source, 'skip');
+});
+
+check('home mailing address is the whole address; "Address" alone is line 1', () => {
+  const r = createResolver({ config: { personal: { address_line_1: '1 Main St', city: 'Arlington', state: 'Texas', postal_code: '76002' } }, profile });
+  assert.equal(r('Home Mailing Address')?.answer, '1 Main St, Arlington, Texas 76002');
+  assert.equal(r('Address')?.answer, '1 Main St');
+});
+
+check('SMS notification preferences count as opt-ins', () => {
+  assert.ok(isOptInLabel('Select your preference to receive notification updates regarding the application. Message and data rates may apply.'));
+  assert.ok(!isAgreementLabel('Your consent is not a condition of your application. Message and data rates may apply.'));
 });

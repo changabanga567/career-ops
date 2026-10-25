@@ -20,7 +20,7 @@
  * running career-ops modes never add it on their own (AGENTS.md → Ethical Use).
  */
 
-import { existsSync, mkdirSync, readFileSync, readdirSync, unlinkSync } from 'fs';
+import { existsSync, mkdirSync, readFileSync, readdirSync, statSync, unlinkSync } from 'fs';
 import { join, resolve } from 'path';
 import { createInterface } from 'readline/promises';
 import { isMainModule } from './lib/is-main-module.mjs';
@@ -210,6 +210,8 @@ function scanAtsFields() {
     if (!label) label = own || first.getAttribute('aria-label') || first.placeholder || '';
     if (own && label !== own && !label.includes(own)) label = `${label} ${own}`;
 
+    // File inputs sit under a button ("Attach"); the question is the container's first line ("Cover Letter *").
+    if (first.type === 'file' && box) label = (box.innerText || '').split('\n').map((l) => l.trim()).find(Boolean) || label;
     const required = /[*✱]/.test(label) || members.some((m) => m.required || m.getAttribute('aria-required') === 'true');
     label = label.replace(/[*✱]/g, '').replace(/\s+/g, ' ').trim();
 
@@ -403,6 +405,34 @@ function answerFor(field, ctx) {
   return null;
 }
 
+function isCoverInput(field) {
+  return /cover/i.test(`${field.label} ${field.meta}`);
+}
+
+/** A cover letter rendered for this report: output/*-<NNN>-*cover*.pdf, newest first. */
+function findCoverPdf(report) {
+  if (report == null) return null;
+  const dir = join(DATA_ROOT, 'output');
+  if (!existsSync(dir)) return null;
+  const padded = String(report).padStart(3, '0');
+  const hits = readdirSync(dir).filter((n) => n.endsWith('.pdf') && /cover/i.test(n) && n.includes(`-${padded}-`)).map((n) => join(dir, n));
+  hits.sort((a, b) => statSync(b).mtimeMs - statSync(a).mtimeMs);
+  return hits[0] ?? null;
+}
+
+async function uploadCover(page, fields, ctx) {
+  const target = fields.find((f) => f.kind === 'file' && isCoverInput(f));
+  if (!target) return null;
+  if (ctx.coverPath) {
+    const name = resumeFileName(ctx.prefix, `Cover Letter - ${ctx.role}`);
+    await page.locator(q(target.idx)).first().setInputFiles({ name, mimeType: 'application/pdf', buffer: readFileSync(ctx.coverPath) });
+    ctx.say(`  uploaded ${name}`);
+    return null;
+  }
+  // Never invent a letter: the candidate's own reasons are needed (modes/cover.md).
+  return target.required ? 'Cover letter (required) — none written for this job yet' : null;
+}
+
 function isResumeInput(field) {
   return /resume|\bcv\b|_systemfield_resume/i.test(`${field.label} ${field.meta}`) && !/cover/i.test(`${field.label} ${field.meta}`);
 }
@@ -430,7 +460,10 @@ async function fillForm(page, ctx) {
         if (field.required && !field.value && !unanswered.some((u) => u.startsWith(field.label))) unanswered.push(field.label);
         continue;
       }
-      if (hit.source === 'skip' || !hit.answer) continue;
+      if (hit.source === 'skip' || !hit.answer) {
+        if (field.required && !field.value && !unanswered.some((u) => u.startsWith(field.label))) unanswered.push(field.label);
+        continue;
+      }
       field.key = hit.key;
       if (done.has(id) && field.value) continue;
       // Leave prefilled text alone unless it contradicts the configured answer.
@@ -460,6 +493,7 @@ async function fillForm(page, ctx) {
 async function askMissing(page, unanswered, ctx) {
   if (!ctx.prompt || unanswered.length === 0) return unanswered;
   for (const label of unanswered) {
+    if (/^cover letter/i.test(label)) continue;
     const reply = (await ctx.ask(`  ? ${label}\n    answer (blank to skip): `)).trim();
     if (reply) ctx.learned[label.replace(/ \[options:.*$/, '')] = reply;
   }
@@ -552,7 +586,9 @@ export async function runAtsJob(browser, job, ctx) {
     if (!fields.length) return { status: 'error', errors: ['no application form on the page'], screenshot: await screenshot(page, job.url, 'error') };
     if (!(await uploadResume(page, fields, ctx))) ctx.say('  ! no resume upload field found');
 
+    const coverMissing = await uploadCover(page, fields, ctx);
     let unanswered = await fillForm(page, ctx);
+    if (coverMissing) unanswered.push(coverMissing);
     unanswered = await askMissing(page, unanswered, ctx);
     if (unanswered.length) return { status: 'needs_input', questions: unanswered, screenshot: await screenshot(page, job.url, 'needs-input') };
 
@@ -688,6 +724,9 @@ async function main() {
       ctx.employer = job.company || ctx.slug;
       ctx.pdfPath = job.pdfPath;
       ctx.uploadName = resumeFileName(prefix, job.role);
+      ctx.prefix = prefix;
+      ctx.role = job.role;
+      ctx.coverPath = job.cover ? resolve(DATA_ROOT, job.cover) : findCoverPdf(job.report);
       ctx.refreshResolver();
       const result = await runAtsJob(browser, job, ctx);
       const via = { greenhouse: 'Greenhouse', lever: 'Lever', ashby: 'Ashby' }[ctx.vendor];

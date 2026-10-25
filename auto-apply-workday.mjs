@@ -77,6 +77,8 @@ Fills a Workday application end to end and stops on the Review page.
   --limit N        with --from-tracker: at most N jobs this run
   --min-score X    with --from-tracker: skip rows scored below X (e.g. 4.0);
                    unscored (N/A) rows are not skipped
+  --answers FILE   extra YAML list of {match, answer} rules for this run,
+                   checked before config/auto-apply.yml (job-specific answers)
   --submit         click Submit on the Review page (default: stop and wait)
   --headless       run without a visible window (implies --no-prompt)
   --no-prompt      never ask in the terminal; a job with an unanswered
@@ -91,7 +93,7 @@ Login:   WORKDAY_EMAIL / WORKDAY_PASSWORD in .env.`;
 // ── CLI ──────────────────────────────────────────────────────────────
 
 export function parseCli(argv) {
-  const opts = { jobs: [], submit: false, headless: false, prompt: true, force: false, dryRun: false, help: false, fromTracker: false, limit: null, minScore: null };
+  const opts = { jobs: [], submit: false, headless: false, prompt: true, force: false, dryRun: false, help: false, fromTracker: false, limit: null, minScore: null, answers: null };
   let url = null;
   let pdf = null;
   let report = null;
@@ -111,6 +113,7 @@ export function parseCli(argv) {
       case '--from-tracker': opts.fromTracker = true; break;
       case '--limit': opts.limit = Number(value()); break;
       case '--min-score': opts.minScore = Number(value()); break;
+      case '--answers': opts.answers = value(); break;
       case '--submit': opts.submit = true; break;
       case '--headless': opts.headless = true; opts.prompt = false; break;
       case '--no-prompt': opts.prompt = false; break;
@@ -307,6 +310,21 @@ function reportUrl(num) {
   if (!file) return null;
   const m = /^\*\*URL:\*\*\s*<?(https?:\/\/[^\s>)]+)/m.exec(readFileSync(join(dir, file), 'utf-8'));
   return m ? m[1] : null;
+}
+
+/** Role per report number from the tracker, for jobs given by --url/--batch (upload file name). */
+function trackerRoles() {
+  const trackerPath = resolveTrackerPath(DATA_ROOT);
+  if (!existsSync(trackerPath)) return new Map();
+  const lines = readFileSync(trackerPath, 'utf-8').split(/\r?\n/);
+  const colmap = resolveColumns(lines);
+  const roles = new Map();
+  for (const line of lines) {
+    const row = parseTrackerRow(line, colmap);
+    const report = row && linkedReportNumbers(row.report, row.notes)[0];
+    if (report != null && row.role) roles.set(String(report), row.role);
+  }
+  return roles;
 }
 
 function trackerJobs(opts) {
@@ -979,8 +997,8 @@ async function fillPage(page, ctx) {
       // below"); the option texts are what say the question is about disability.
       const resolved = ctx.resolve(field.label)
         ?? (field.options.length ? ctx.resolve(`${field.label} ${field.options.join(' ')}`) : null);
-      if (resolved?.source === 'skip') continue;
-      if (!resolved) {
+      if (resolved?.source === 'skip' && !(field.required && !field.value)) continue;
+      if (!resolved || resolved.source === 'skip') {
         if (field.required && pass === 1) unanswered.push(field);
         continue;
       }
@@ -1192,6 +1210,12 @@ async function main() {
 
   await loadEnv();
   const config = readYamlFile(CONFIG_PATH, 'config/auto-apply.yml');
+  if (opts.answers) {
+    const extra = loadYaml(readFileSync(resolve(DATA_ROOT, opts.answers), 'utf-8'));
+    const list = Array.isArray(extra) ? extra : extra?.questions;
+    if (!Array.isArray(list)) throw new Error(`${opts.answers}: expected a list of {match, answer}`);
+    config.questions = [...list, ...(config.questions ?? [])];
+  }
   if (!existsSync(CONFIG_PATH)) console.warn('warning: config/auto-apply.yml not found — copy config/auto-apply.example.yml and fill in your answers');
   const profile = readYamlFile(getProfilePath(), 'config/profile.yml');
   if (opts.fromTracker) opts.jobs.push(...trackerJobs(opts));
@@ -1206,9 +1230,11 @@ async function main() {
     console.log('No Workday jobs to apply to.');
     return;
   }
+  const roles = opts.jobs.some((job) => !job.role && job.report) ? trackerRoles() : new Map();
   for (const job of opts.jobs) {
     if (!isWorkdayUrl(job.url)) throw new Error(`not a Workday URL: ${job.url}`);
     job.pdfPath = resolveJobPdf(job);
+    job.role = job.role || roles.get(String(job.report)) || null;
   }
 
   const creds = credentials(profile, config);
@@ -1216,7 +1242,7 @@ async function main() {
   if (pwProblems.length) console.warn(`warning: most Workday tenants reject this password at sign-up; it needs ${pwProblems.join(', ')}`);
 
   console.log(`${opts.jobs.length} job(s) · login ${creds.email} · ${opts.submit ? 'WILL SUBMIT' : 'stops at Review'}`);
-  for (const job of opts.jobs) console.log(`  ${job.url}\n    resume ${job.pdfPath.replace(`${DATA_ROOT}/`, '')}${job.report ? ` · report ${job.report}` : ''}`);
+  for (const job of opts.jobs) console.log(`  ${job.url}\n    resume ${job.pdfPath.replace(`${DATA_ROOT}/`, '')}${job.role ? ` as ${resumeFileName(config.daily?.resume_prefix ?? '', job.role)}` : ''}${job.report ? ` · report ${job.report}` : ''}`);
   if (opts.dryRun) return;
 
   const rl = opts.prompt ? createInterface({ input: process.stdin, output: process.stdout }) : null;
