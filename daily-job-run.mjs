@@ -302,10 +302,8 @@ function exportResumes(settings, exportDir, rows, { exportAll, dryRun }) {
     }
     const row = byReport.get(report);
     const title = row?.role || basename(pdf, '.pdf');
-    let name = prev?.name ?? resumeFileName(settings.resume_prefix, title);
-    const owner = usedNames.get(name.toLowerCase());
-    if (owner != null && owner !== report) name = resumeFileName(settings.resume_prefix, title, row?.company || `report ${report}`);
-    if (usedNames.has(name.toLowerCase()) && usedNames.get(name.toLowerCase()) !== report) name = resumeFileName(settings.resume_prefix, title, `${row?.company || 'report'} ${report}`);
+    // Always "<prefix><Job Title>.pdf"; a newer resume for the same title overwrites the older one (user, 2026-10-25).
+    const name = resumeFileName(settings.resume_prefix, title);
     if (!dryRun) {
       mkdirSync(exportDir, { recursive: true });
       copyFileSync(pdf, join(exportDir, name));
