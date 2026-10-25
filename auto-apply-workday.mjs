@@ -692,16 +692,19 @@ function scanFieldsInPage() {
 // ── Widget drivers ───────────────────────────────────────────────────
 
 async function visibleOptions(page) {
-  const loc = page.locator('[role="listbox"] [role="option"]:visible, [data-automation-id="promptOption"]:visible');
+  const loc = page.locator('[role="listbox"]:not([data-automation-id="selectedItemList"]) [role="option"]:visible, [data-automation-id="promptOption"]:visible');
   const texts = (await loc.allInnerTexts().catch(() => [])).map((t) => t.replace(/\s+/g, ' ').trim());
   return { loc, texts };
 }
 
 async function fillDropdown(page, box, answer) {
   const button = box.locator('button[aria-haspopup="listbox"]').first();
-  const listOpen = () => page.locator('[role="listbox"] [role="option"]:visible').count().then((n) => n > 0, () => false);
+  // Selected-value chips of prompt widgets ("United States of America (+1)") are also role=listbox: ignore them.
+  const LIST = '[role="listbox"]:not([data-automation-id="selectedItemList"])';
+  const OPTION = `${LIST} [role="option"]:visible`;
+  const listOpen = () => page.locator(OPTION).count().then((n) => n > 0, () => false);
   // The previous dropdown's list can still be on screen while it closes; wait it out first.
-  const anyList = page.locator('[role="listbox"]:visible');
+  const anyList = page.locator(`${LIST}:visible`);
   if (await anyList.count()) {
     await page.keyboard.press('Escape').catch(() => {});
     await anyList.first().waitFor({ state: 'hidden', timeout: 3000 }).catch(() => {});
@@ -713,7 +716,7 @@ async function fillDropdown(page, box, answer) {
   }
   const choices = String(answer).split(ALTERNATIVES).map((c) => c.trim()).filter(Boolean);
   const read = async () => {
-    const loc = page.locator('[role="listbox"] [role="option"]:visible');
+    const loc = page.locator(OPTION);
     return { loc, texts: (await loc.allInnerTexts().catch(() => [])).map((t) => t.replace(/\s+/g, ' ').trim()) };
   };
   const pick = (texts) => {
@@ -727,7 +730,7 @@ async function fillDropdown(page, box, answer) {
   let i = pick(texts);
   const seen = new Set(texts);
   // Long lists may render only the options near the current value: scroll through the rest.
-  const list = page.locator('[role="listbox"]:visible').last();
+  const list = page.locator(`${LIST}:visible`).last();
   for (let top = 0; i === -1 && (await list.count()); top += 250) {
     const more = await list.evaluate((el, y) => {
       let s = el;
