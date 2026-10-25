@@ -965,7 +965,9 @@ async function tick(locator) {
 /** An answer may list fallbacks ("Career Site || Company Website || LinkedIn"); use the first one the form accepts. */
 async function applyAnswer(page, field, answer) {
   const choices = String(answer).split(ALTERNATIVES).map((c) => c.trim()).filter(Boolean);
-  if (choices.length <= 1 || ['text', 'textarea', 'date', 'checkbox'].includes(field.kind)) return applyOneAnswer(page, field, choices[0] ?? '');
+  // A date field takes the first alternative that is a date ("Immediately || 10/26/2026").
+  if (field.kind === 'date') return applyOneAnswer(page, field, choices.find((c) => parseDate(c)) ?? choices[0] ?? '');
+  if (choices.length <= 1 || ['text', 'textarea', 'checkbox'].includes(field.kind)) return applyOneAnswer(page, field, choices[0] ?? '');
   // A dropdown tries every acceptable answer against one open list.
   if (field.kind === 'dropdown') return applyOneAnswer(page, field, answer);
   let last = { ok: false };
@@ -1197,7 +1199,7 @@ async function fillPage(page, ctx) {
       if (field.kind === 'file' || field.kind === 'unknown') continue;
       if (field.value && field.kind === 'date') {
         const mine = ctx.resolve(field.label);
-        const d = mine?.answer ? parseDate(mine.answer) : null;
+        const d = mine?.answer ? String(mine.answer).split(ALTERNATIVES).map((c) => parseDate(c.trim())).find(Boolean) ?? null : null;
         const want = d ? [d.mm, d.dd, d.yyyy] : null;
         const have = field.value.split('/');
         if (!want || (have.length === 3 && have[0].padStart(2, '0') === want[0] && have[1].padStart(2, '0') === want[1] && have[2] === want[2])) continue;
