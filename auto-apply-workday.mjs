@@ -870,9 +870,19 @@ async function promptHasSelection(box) {
 }
 
 /** Workday "prompt" widgets (How did you hear, Country phone code…): search, pick, descend at most 3 levels. */
+/** A click that times out (the popup re-rendered, or a chip replaced the input) is a miss, not a crash of the whole job. */
 async function fillPrompt(page, box, answer) {
+  try {
+    return await fillPromptOnce(page, box, answer);
+  } catch (err) {
+    await page.keyboard.press('Escape').catch(() => {});
+    return { ok: false, options: [], error: err.message.split('\n')[0] };
+  }
+}
+
+async function fillPromptOnce(page, box, answer) {
   const input = box.locator('input').first();
-  await input.click();
+  await input.click({ timeout: 8000 });
   await input.fill(answer);
   await page.keyboard.press('Enter');
   await pause(700, 1000);
