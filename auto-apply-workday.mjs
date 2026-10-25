@@ -1130,8 +1130,22 @@ async function fillWorkExperience(page, ctx) {
   return filled;
 }
 
+/** Earlier attempts can leave extra "Websites N" entries; duplicates of one URL block Save. Keep the first. */
+async function pruneExtraWebsites(page, ctx) {
+  const groups = page.locator('[role="group"][aria-labelledby^="Websites-"]');
+  for (let i = (await groups.count()) - 1; i >= 1; i--) {
+    const del = groups.nth(i).getByRole('button', { name: /^delete$/i }).first();
+    if (await del.isVisible().catch(() => false)) {
+      await del.click({ force: true }).catch(() => {});
+      ctx.say(`  removed extra website entry ${i + 1}`);
+      await pause(400, 700);
+    }
+  }
+}
+
 /** Fill every question on the current step. Returns labels still unanswered and required. */
 async function fillPage(page, ctx) {
+  await pruneExtraWebsites(page, ctx);
   const unanswered = [];
   // Two passes: answering one question (country, "previous worker") often reveals others.
   for (let pass = 0; pass < 2; pass++) {
@@ -1289,6 +1303,7 @@ async function runJob(browser, job, ctx) {
   page.on('response', (r) => {
     const u = r.url();
     if ((r.status() === 400 && r.request().method() === 'POST' && /\/jobapplications$/.test(u)) || /\/jobapplication\/undefined\//.test(u)) noApplication.seen = true;
+    if (process.env.CA_DEBUG && r.status() >= 400 && /\/wday\//.test(u)) r.text().then((t) => ctx.say(`  [debug] ${r.status()} ${r.request().method()} ${u.replace(/^https:\/\/[^/]+/, '').slice(0, 120)} ${t.slice(0, 200)}`)).catch(() => {});
   });
   ctx.uploaded = false;
   ctx.uploadName = job.role ? resumeFileName(ctx.config.daily?.resume_prefix ?? '', job.role) : null;
