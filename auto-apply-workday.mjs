@@ -473,8 +473,9 @@ async function startApplication(page, url) {
   if (ALREADY_RE.test(landing)) return 'already_applied';
   if (CLOSED_RE.test(landing)) return 'closed';
   if (!(await onApplicationStep(page)) && !(await visible(page.locator(`${aid('email')}, ${aid('signInSubmitButton')}`)))) {
-    const clicked = (await clickAid(page, 'adventureButton'))
-      || (await page.getByRole('button', { name: /^apply( now)?$/i }).first().click({ timeout: 5000 }).then(() => true, () => false))
+    // A saved draft turns "Apply" into "Continue Application".
+    const clicked = (await clickAid(page, ['adventureButton', 'continueButton']))
+      || (await page.getByRole('button', { name: /^(apply( now)?|continue application)$/i }).first().click({ timeout: 5000 }).then(() => true, () => false))
       || (await page.getByRole('link', { name: /^apply( now)?$/i }).first().click({ timeout: 5000 }).then(() => true, () => false));
     if (!clicked) {
       if (CLOSED_RE.test(await pageText(page))) return 'closed';
