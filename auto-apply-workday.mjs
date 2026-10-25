@@ -806,7 +806,9 @@ async function fillDropdown(page, box, answer) {
   const seen = new Set(texts);
   // Long lists may render only the options near the current value: scroll through the rest.
   const list = page.locator(`${LIST}:visible`).last();
-  for (let top = 0; i === -1 && (await list.count()); top += 250) {
+  // Bounded: a lazy-loading list keeps growing as it scrolls, so stop after a fixed
+  // number of screens or once a scroll reveals no option not seen before.
+  for (let top = 0, step = 0; i === -1 && step < 40 && (await list.count()); top += 250, step++) {
     const more = await list.evaluate((el, y) => {
       let s = el;
       while (s && s.scrollHeight <= s.clientHeight) s = s.parentElement;
@@ -816,9 +818,10 @@ async function fillDropdown(page, box, answer) {
     }, top).catch(() => false);
     await pause(150, 250);
     ({ loc, texts } = await read());
+    const before = seen.size;
     texts.forEach((t) => seen.add(t));
     i = pick(texts);
-    if (!more) break;
+    if (!more || (step > 0 && seen.size === before)) break;
   }
   if (i === -1) {
     await page.keyboard.press('Escape');
