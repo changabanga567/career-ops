@@ -616,7 +616,8 @@ function scanFieldsInPage() {
       field.value = boxes[0].checked ? 'checked' : '';
     } else if (month) {
       field.kind = 'date';
-      field.value = month.value || '';
+      const part = (name) => el.querySelector(`[data-automation-id="dateSection${name}-input"]`)?.value || '';
+      field.value = [part('Month'), part('Day'), part('Year')].filter(Boolean).join('/');
     } else if (listboxBtn) {
       field.kind = 'dropdown';
       const current = text(listboxBtn);
@@ -727,9 +728,8 @@ function parseDate(answer) {
 async function fillDate(box, answer) {
   const d = parseDate(answer);
   if (!d) return { ok: false };
-  await typeDateSection(box, 'Month', d.mm);
-  await typeDateSection(box, 'Day', d.dd);
-  await typeDateSection(box, 'Year', d.yyyy);
+  const hasDay = await box.locator(`input${aid('dateSectionDay-input')}`).count();
+  await typeDateDigits(box, hasDay ? `${d.mm}${d.dd}${d.yyyy}` : `${d.mm}${d.yyyy}`);
   return { ok: true, chose: answer };
 }
 
@@ -838,14 +838,26 @@ async function typeDateSection(scope, section, value) {
   return true;
 }
 
+/**
+ * Type a whole Workday date in one go: focus the first section and type every
+ * digit, letting Workday advance month → day → year itself. Clicking into each
+ * section separately scrambled the digits on a live tenant (10/25/2026 → 02/02/2006).
+ */
+async function typeDateDigits(scope, digits) {
+  if (!(await scope.locator(`input${aid('dateSectionMonth-input')}`).count())) return false;
+  const page = scope.page();
+  await typeDateSection(scope, 'Month', '');
+  await page.keyboard.type(digits, { delay: 90 });
+  await page.keyboard.press('Tab').catch(() => {});
+  return true;
+}
+
 async function typeMonthYear(scope, date) {
   if (!date) return false;
   const year = scope.locator(`input${aid('dateSectionYear-input')}`).first();
   if (!(await year.count())) return false;
   if ((await year.inputValue().catch(() => '')).trim()) return true;
-  await typeDateSection(scope, 'Month', date.mm);
-  await typeDateSection(scope, 'Year', date.yyyy);
-  return true;
+  return typeDateDigits(scope, `${date.mm}${date.yyyy}`);
 }
 
 /** City for a past job from config work_history.locations ("Company | Title" first, then "Company"). */
@@ -919,7 +931,14 @@ async function fillPage(page, ctx) {
     const fields = await page.evaluate(scanFieldsInPage);
     for (const field of fields) {
       if (field.kind === 'file' || field.kind === 'unknown') continue;
-      if (field.value && field.kind !== 'checkbox') {
+      if (field.value && field.kind === 'date') {
+        const mine = ctx.resolve(field.label);
+        const d = mine?.answer ? parseDate(mine.answer) : null;
+        const want = d ? [d.mm, d.dd, d.yyyy] : null;
+        const have = field.value.split('/');
+        if (!want || (have.length === 3 && have[0].padStart(2, '0') === want[0] && have[1].padStart(2, '0') === want[1] && have[2] === want[2])) continue;
+        ctx.say(`  ! "${field.label.slice(0, 50)}" was ${field.value}, correcting`);
+      } else if (field.value && field.kind !== 'checkbox') {
         // Keep a value Workday or an earlier run filled, unless it contradicts our answer (a draft can hold a wrong pick).
         const mine = ['dropdown', 'radio', 'select'].includes(field.kind) ? ctx.resolve(field.label) : null;
         const wanted = mine?.answer ? mine.answer.split(ALTERNATIVES) : [];
