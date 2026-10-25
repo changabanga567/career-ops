@@ -942,7 +942,8 @@ async function fillDate(box, answer) {
 }
 
 async function fillText(page, box, kind, answer) {
-  const loc = box.locator(kind === 'textarea' ? 'textarea' : 'input:not([type="hidden"])').first();
+  // Some tenants render a one-line question as a textarea next to unrelated inputs: prefer the textarea.
+  const loc = box.locator(kind === 'textarea' || (await box.locator('textarea').count()) ? 'textarea' : 'input:not([type="hidden"])').first();
   await loc.fill(answer);
   await page.keyboard.press('Tab').catch(() => {});
   return { ok: true, chose: answer };
