@@ -1196,6 +1196,11 @@ async function runJob(browser, job, ctx) {
         ctx.say('  Workday error page — refreshing');
         await page.reload({ waitUntil: 'domcontentloaded' }).catch(() => {});
         await settle(page);
+        // Some tenants reload the apply URL to an empty shell: start again from the posting.
+        if ((await waitForAuthOrStep(page, 20_000)) === 'timeout') {
+          await startApplication(page, job.url);
+          await settle(page);
+        }
         if (await onAuthStep(page)) await authenticate(page, ctx.creds, ctx);
         i--;
         continue;
