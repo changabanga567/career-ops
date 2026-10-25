@@ -272,10 +272,10 @@ export function blacklistHit(rules, { company, url }) {
 }
 
 /**
- * Evaluated Workday rows of the tracker, newest first.
+ * Evaluated rows of the tracker whose URL passes `accept` (Workday by default), newest first.
  * io.reportUrl(num) → the report's **URL:** (or null); io.findPdf(num) → PDF path or null.
  */
-export function selectTrackerJobs(trackerText, io, { minScore = null } = {}) {
+export function selectTrackerJobs(trackerText, io, { minScore = null, accept = isWorkdayUrl } = {}) {
   const lines = String(trackerText ?? '').split(/\r?\n/);
   const colmap = resolveColumns(lines);
   const jobs = [];
@@ -286,7 +286,7 @@ export function selectTrackerJobs(trackerText, io, { minScore = null } = {}) {
     const report = linkedReportNumbers(row.report, row.notes)[0];
     const url = row.url || (report != null ? io.reportUrl(report) : null);
     const label = `#${row.num} ${row.company}`;
-    if (!url || !isWorkdayUrl(url)) continue;
+    if (!url || !accept(url)) continue;
     const score = /\d/.test(row.score) ? parseScore(row.score) : null;
     // Unscored rows (N/A) were prepared without a numeric evaluation; only a
     // real score below the bar skips a job.
@@ -471,13 +471,22 @@ async function startApplication(page, url) {
   return 'started';
 }
 
+/** Type like a person: some tenants (KION) ignore values set without key events and never send the login. */
+async function typeInto(locator, value) {
+  await locator.click({ force: true });
+  await locator.fill('');
+  await locator.pressSequentially(value, { delay: 35 });
+  await locator.press('Tab').catch(() => {});
+  if ((await locator.inputValue().catch(() => value)) !== value) await locator.fill(value);
+}
+
 async function fillCredentials(page, creds, { confirm = false } = {}) {
-  await page.locator(`input${aid('email')}`).first().fill(creds.email);
+  await typeInto(page.locator(`input${aid('email')}`).first(), creds.email);
   await pause();
-  await page.locator(`input${aid('password')}`).first().fill(creds.password);
+  await typeInto(page.locator(`input${aid('password')}`).first(), creds.password);
   if (confirm) {
     await pause();
-    await page.locator(`input${aid('verifyPassword')}`).first().fill(creds.password);
+    await typeInto(page.locator(`input${aid('verifyPassword')}`).first(), creds.password);
   }
   await pause();
 }
@@ -1158,9 +1167,9 @@ function markClosed(report) {
   return r.status === 0 ? 'tracker: marked Discarded (posting closed)' : `tracker not updated: ${(r.stderr || r.stdout).trim().split('\n')[0]}`;
 }
 
-function markApplied(report, shot) {
+function markApplied(report, shot, via = 'Workday') {
   // Dated receipt wording, so receipt-based ledgers (e.g. a daily-progress reconciler) count it.
-  const note = `Applied ${localToday()} via Workday auto-apply; employer success receipt confirmed (application submitted)${shot ? `; screenshot ${shot.replace(`${DATA_ROOT}/`, '')}` : ''}`;
+  const note = `Applied ${localToday()} via ${via} auto-apply; employer success receipt confirmed (application submitted)${shot ? `; screenshot ${shot.replace(`${DATA_ROOT}/`, '')}` : ''}`;
   const r = spawnSync(process.execPath, [join(CODE_ROOT, 'set-status.mjs'), '--report', String(report), 'Applied', '--note', note], { encoding: 'utf-8' });
   return r.status === 0 ? 'tracker updated' : `tracker not updated: ${(r.stderr || r.stdout).trim().split('\n')[0]}`;
 }
@@ -1267,4 +1276,8 @@ if (isMainModule(import.meta.url)) {
   });
 }
 
-export { normalizeLabel, urlKey, runJob, authenticate, fillPage, startApplication, settle };
+export {
+  normalizeLabel, urlKey, runJob, authenticate, fillPage, startApplication, settle,
+  loadEnv, readYamlFile, readLearned, saveLearned, resolveJobPdf, reportUrl, alreadySubmitted, logResult, screenshot,
+  markApplied, markClosed, tick, pause, CONFIG_PATH, DATA_ROOT, CODE_ROOT, CONFIRM_RE, ALREADY_RE,
+};

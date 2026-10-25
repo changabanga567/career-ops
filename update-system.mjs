@@ -421,6 +421,7 @@ const SYSTEM_PATHS = [
   'prepare-application.mjs',
   'application-artifacts.mjs',
   'auto-apply-workday.mjs',
+  'auto-apply-ats.mjs',
   'daily-job-run.mjs',
   'evaluation-cache.mjs',
   'batch-evaluate-gemini.mjs',

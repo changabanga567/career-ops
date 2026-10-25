@@ -9,7 +9,8 @@
  *                tailored one-page resume when the job fits
  *   3. EXPORT    every new tailored resume is copied to your folder as
  *                "<prefix><Job Title>.pdf" (only one-page PDFs are copied)
- *   4. APPLY     auto-apply-workday.mjs --from-tracker on the Workday jobs
+ *   4. APPLY     auto-apply-workday.mjs --from-tracker on the Workday jobs, then
+ *                auto-apply-ats.mjs --from-tracker on Greenhouse/Lever/Ashby jobs
  *   5. TRACKER   Job-Tracker.csv in the same folder, rebuilt from
  *                data/applications.md every run
  *
@@ -56,7 +57,7 @@ const DEFAULTS = {
 const USAGE = `Usage: node daily-job-run.mjs [options]
 
 Scan → evaluate + tailor one-page resumes → copy them to your folder →
-auto-apply on Workday → rebuild Job-Tracker.csv.
+auto-apply on Workday, Greenhouse, Lever and Ashby → rebuild Job-Tracker.csv.
 
   --submit          let auto-apply click Submit (default: stop at Review)
   --since N         postings from the last N days (default: daily.since_days, 1)
@@ -186,7 +187,9 @@ export function agentPrompt(lead, minScore) {
  *     `node -e` and never the apply or daily-run scripts;
  *   - file edits: only the user-data folders, never the code it runs.
  */
-export const AGENT_BLOCKED_SCRIPTS = ['auto-apply-workday.mjs', 'daily-job-run.mjs'];
+export const AGENT_BLOCKED_SCRIPTS = ['auto-apply-workday.mjs', 'auto-apply-ats.mjs', 'daily-job-run.mjs'];
+
+const AUTO_VENDORS = { workday: 'Workday', greenhouse: 'Greenhouse', lever: 'Lever', ashby: 'Ashby' };
 export const AGENT_WRITABLE = ['reports/**', 'output/**', 'data/**', 'jds/**', 'batch/tracker-additions/**', 'interview-prep/**', '//tmp/**'];
 
 export function agentTools(scripts) {
@@ -329,7 +332,7 @@ function writeTracker(exportDir, rows, resumeNames, { dryRun }) {
       role: row.role,
       score: /\d/.test(row.score) ? parseScore(row.score) : row.score,
       status: row.status,
-      howToApply: !url ? '' : vendor === 'workday' ? 'Auto (Workday)' : `Manual (${vendor})`,
+      howToApply: !url ? '' : AUTO_VENDORS[vendor] ? `Auto (${AUTO_VENDORS[vendor]})` : `Manual (${vendor})`,
       resume: resumeNames.get(row.reportNum) ?? '',
       url,
       notes: row.notes,
@@ -406,6 +409,7 @@ async function main() {
       if (!process.stdin.isTTY) args.push('--no-prompt');
       if (opts.dryRun) args.push('--dry-run');
       summary.applyExit = runNode('auto-apply-workday.mjs', args, { label: 'Apply: Workday jobs from the tracker' });
+      summary.applyAtsExit = runNode('auto-apply-ats.mjs', args, { label: 'Apply: Greenhouse / Lever / Ashby jobs from the tracker' });
     }
 
     // 5. Tracker spreadsheet (re-read: apply may have marked rows Applied)

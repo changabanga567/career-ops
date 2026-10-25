@@ -101,15 +101,16 @@ check('resolveExportDir falls back to this PC\'s Desktop when the configured use
 });
 
 check('agent runs sandboxed: named scripts only, no node -e, no apply, edits only in data folders', () => {
-  const scripts = ['generate-pdf.mjs', 'merge-tracker.mjs', 'auto-apply-workday.mjs', 'daily-job-run.mjs'];
+  const scripts = ['generate-pdf.mjs', 'merge-tracker.mjs', 'auto-apply-workday.mjs', 'auto-apply-ats.mjs', 'daily-job-run.mjs'];
   const { allowed, denied } = agentTools(scripts);
   assert.ok(allowed.includes('Bash(node generate-pdf.mjs:*)'));
-  assert.ok(!allowed.some((t) => /auto-apply-workday|daily-job-run/.test(t)), 'apply scripts are never allowed');
+  assert.ok(!allowed.some((t) => /auto-apply-(workday|ats)|daily-job-run/.test(t)), 'apply scripts are never allowed');
   assert.ok(!allowed.some((t) => t === 'Bash' || t === 'Bash(node:*)' || t === 'Write' || t === 'Edit'), 'no blanket shell or write');
   assert.ok(allowed.includes('Edit(reports/**)') && allowed.includes('Write(output/**)'));
   assert.ok(!allowed.some((t) => /^(Edit|Write)\((\*\*|[^/]*\.mjs)/.test(t)), 'code is not writable');
   assert.ok(denied.includes('Bash(node -e:*)'));
   assert.ok(denied.includes('Bash(node auto-apply-workday.mjs:*)'));
+  assert.ok(denied.includes('Bash(node auto-apply-ats.mjs:*)'));
   const argv = agentCommand('claude', {}, scripts);
   assert.ok(!argv.some((a) => /dangerously|bypass/i.test(a)), 'never skips permissions');
   assert.ok(argv.indexOf('--disallowedTools') > argv.indexOf('--allowedTools'));
