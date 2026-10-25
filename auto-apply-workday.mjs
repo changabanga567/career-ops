@@ -514,6 +514,8 @@ async function waitAuthOutcome(page) {
   const deadline = Date.now() + 60_000;
   while (Date.now() < deadline) {
     if (await onApplicationStep(page)) return 'ok';
+    // Some tenants (KION) answer a new account by sending you to a stand-alone sign-in page.
+    if (await visible(page.locator(aid('SignInWithEmailButton'))) && !(await visible(page.locator(`input${aid('password')}`)))) return 'signin';
     const text = await pageText(page);
     if (VERIFY_RE.test(text)) return 'verify';
     const authErrors = await page.locator(`${aid('errorMessage')}, ${aid('errorBanner')}`).allInnerTexts().catch(() => []);
@@ -570,7 +572,20 @@ async function authenticate(page, creds, ctx) {
   if (outcome === 'ok' || await signedInAfterAll(page)) return;
   ctx.say(`  sign-in ${outcome}; creating an account on this tenant`);
   outcome = await createAccount(page, creds);
-  if (outcome === 'ok' || await signedInAfterAll(page)) return;
+  if (outcome === 'ok') return;
+  if (outcome === 'signin') {
+    ctx.say('  account created; signing in');
+    outcome = await signIn(page, creds);
+    if (outcome === 'ok') return;
+    // Signed in on the stand-alone page: it may land on the candidate home, so reopen the job.
+    if (outcome !== 'error' && ctx.reopen) {
+      await ctx.reopen();
+      const where = await waitForAuthOrStep(page);
+      if (where === 'step') return;
+      if (where === 'auth' && (await signIn(page, creds)) === 'ok') return;
+    }
+  }
+  if (await signedInAfterAll(page)) return;
   if (outcome === 'verify') {
     if (!ctx.prompt) throw Object.assign(new Error('this tenant wants the new account verified by email'), { status: 'needs_verification' });
     await ctx.ask(`  Workday sent a verification email to ${creds.email}. Click the link, then press Enter here… `);
@@ -602,7 +617,10 @@ function scanFieldsInPage() {
   };
   // Clear tags from an earlier scan: after a re-render two containers could carry one index.
   for (const old of document.querySelectorAll('[data-ca-field]')) old.removeAttribute('data-ca-field');
-  const all = [...document.querySelectorAll('[data-automation-id^="formField-"], fieldset')].filter(isVisible);
+  // Work-experience entries belong to fillWorkExperience; a job's "Location" is not the candidate's.
+  const WORK_FIELDS = new Set(['formField-jobTitle', 'formField-companyName', 'formField-location', 'formField-roleDescription', 'formField-startDate', 'formField-endDate', 'formField-currentlyWorkHere']);
+  const all = [...document.querySelectorAll('[data-automation-id^="formField-"], fieldset')].filter(isVisible)
+    .filter((el) => !WORK_FIELDS.has(el.getAttribute('data-automation-id')));
   const containers = all.filter((el) => {
     if (el.tagName === 'FIELDSET') {
       return !el.closest('[data-automation-id^="formField-"]') && !el.querySelector('[data-automation-id^="formField-"]');
@@ -681,12 +699,25 @@ async function visibleOptions(page) {
 async function fillDropdown(page, box, answer) {
   await box.locator('button[aria-haspopup="listbox"]').first().click();
   await pause(300, 600);
-  const { loc, texts } = await visibleOptions(page);
-  const i = pickOption(answer, texts);
+  let { loc, texts } = await visibleOptions(page);
+  let i = pickOption(answer, texts);
+  const seen = new Set(texts);
+  // Long lists render only the options near the current value: scroll through the rest.
+  const list = page.locator('[role="listbox"]:visible').last();
+  for (let top = 0; i === -1 && (await list.count()); ) {
+    const more = await list.evaluate((el, y) => { el.scrollTop = y; return el.scrollTop + el.clientHeight < el.scrollHeight; }, top).catch(() => false);
+    await pause(150, 250);
+    ({ loc, texts } = await visibleOptions(page));
+    texts.forEach((t) => seen.add(t));
+    i = pickOption(answer, texts);
+    if (!more) break;
+    top += 250;
+  }
   if (i === -1) {
     await page.keyboard.press('Escape');
-    return { ok: false, options: texts };
+    return { ok: false, options: [...seen] };
   }
+  await loc.nth(i).scrollIntoViewIfNeeded().catch(() => {});
   await loc.nth(i).click();
   return { ok: true, chose: texts[i] };
 }
@@ -959,6 +990,18 @@ async function fillWorkExperience(page, ctx) {
     ctx.say(`  work experience ${i + 1}: ${job.title}, ${job.company} (${job.start.mm}/${job.start.yyyy}–${job.current ? 'present' : `${job.end?.mm}/${job.end?.yyyy}`})`);
     await pause();
   }
+  // Blank entries past the CV's jobs (left by an interrupted earlier attempt) block Next: delete them.
+  for (let i = (await titleInputs.count()) - 1; i >= jobs.length; i--) {
+    const entry = titleInputs.nth(i).locator('xpath=ancestor::*[count(.//input[contains(@id,"--jobTitle")] | .//*[@data-automation-id="formField-jobTitle"]//input) = 1][last()]');
+    const empty = !(await titleInputs.nth(i).inputValue().catch(() => '')).trim() && !(await entry.locator(WX.company).first().inputValue().catch(() => '')).trim();
+    if (!empty) continue;
+    const del = entry.getByRole('button', { name: /delete/i }).first();
+    if (await del.isVisible().catch(() => false)) {
+      await del.click({ force: true });
+      ctx.say(`  work experience ${i + 1}: removed empty entry`);
+      await pause(500, 800);
+    }
+  }
   return filled;
 }
 
@@ -1012,19 +1055,18 @@ async function fillPage(page, ctx) {
 
   const stillOpen = [];
   for (const field of unanswered) {
-    if (!ctx.prompt) {
-      stillOpen.push(field.label);
-      continue;
-    }
-    if (field.kind === 'dropdown' || field.kind === 'prompt') {
-      // Show the real choices before asking.
+    if (field.kind === 'dropdown') {
+      // Read the real choices: shown before asking, and logged when nobody can be asked.
       const box = page.locator(`[data-ca-field="${field.idx}"]`);
-      if (field.kind === 'dropdown') {
-        await box.locator('button[aria-haspopup="listbox"]').first().click().catch(() => {});
-        await pause(300, 500);
-        field.options = (await visibleOptions(page)).texts;
-        await page.keyboard.press('Escape').catch(() => {});
-      }
+      await box.locator('button[aria-haspopup="listbox"]').first().click().catch(() => {});
+      await pause(300, 500);
+      field.options = (await visibleOptions(page)).texts;
+      await page.keyboard.press('Escape').catch(() => {});
+    }
+    if (!ctx.prompt) {
+      const opts = (field.options ?? []).filter(Boolean);
+      stillOpen.push(opts.length ? `${field.label} [options: ${opts.slice(0, 80).join(' / ')}]` : field.label);
+      continue;
     }
     const answer = await askUser(field, ctx);
     if (!answer) {
@@ -1100,6 +1142,7 @@ async function runJob(browser, job, ctx) {
     const started = await startApplication(page, job.url);
     if (started === 'already_applied') return { status: 'already_applied' };
     if (started === 'closed') return { status: 'closed', screenshot: await screenshot(page, job.url, 'closed') };
+    ctx.reopen = () => startApplication(page, job.url);
     await authenticate(page, ctx.creds, ctx);
     await settle(page);
 
