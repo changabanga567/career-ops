@@ -31,6 +31,7 @@ import { createInterface } from 'readline/promises';
 import { fileURLToPath } from 'url';
 import { loadYaml } from './lib/yaml-document.mjs';
 import { isMainModule } from './lib/is-main-module.mjs';
+import { localToday } from './lib/local-today.mjs';
 import { getCareerOpsRoot, getProfilePath, resolveTrackerPath } from './path-resolver.mjs';
 import { linkedReportNumbers, parseScore, parseTrackerRow, resolveColumns } from './tracker-parse.mjs';
 import { freshLaunchOptions } from './apply-scope.mjs';
@@ -1153,8 +1154,10 @@ function markClosed(report) {
   return r.status === 0 ? 'tracker: marked Discarded (posting closed)' : `tracker not updated: ${(r.stderr || r.stdout).trim().split('\n')[0]}`;
 }
 
-function markApplied(report) {
-  const r = spawnSync(process.execPath, [join(CODE_ROOT, 'set-status.mjs'), '--report', String(report), 'Applied', '--note', 'auto-applied (Workday)'], { encoding: 'utf-8' });
+function markApplied(report, shot) {
+  // Dated receipt wording, so receipt-based ledgers (e.g. a daily-progress reconciler) count it.
+  const note = `Applied ${localToday()} via Workday auto-apply; employer success receipt confirmed (application submitted)${shot ? `; screenshot ${shot.replace(`${DATA_ROOT}/`, '')}` : ''}`;
+  const r = spawnSync(process.execPath, [join(CODE_ROOT, 'set-status.mjs'), '--report', String(report), 'Applied', '--note', note], { encoding: 'utf-8' });
   return r.status === 0 ? 'tracker updated' : `tracker not updated: ${(r.stderr || r.stdout).trim().split('\n')[0]}`;
 }
 
@@ -1233,7 +1236,7 @@ async function main() {
       ctx.employer = job.company || (() => { try { return new URL(job.url).hostname.split('.')[0]; } catch { return ''; } })();
       ctx.refreshResolver();
       const result = await runJob(browser, job, ctx);
-      if (result.status === 'submitted' && job.report) result.tracker = markApplied(job.report);
+      if (result.status === 'submitted' && job.report) result.tracker = markApplied(job.report, result.screenshot);
       if (result.status === 'closed' && job.report) result.tracker = markClosed(job.report);
       logResult({ url: job.url, report: job.report ?? null, pdf: job.pdfPath, ...result });
       summary.push({ url: job.url, ...result });
