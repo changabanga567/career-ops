@@ -530,7 +530,7 @@ async function createAccount(page, creds) {
   if (!(await visible(page.locator(`input${aid('verifyPassword')}`)))) return 'no_form';
   await fillCredentials(page, creds, { confirm: true });
   const terms = page.locator(`input${aid('createAccountCheckbox')}`).first();
-  if (await terms.count()) await terms.check({ force: true }).catch(() => {});
+  if (await terms.count()) await tick(terms).catch(() => {});
   await clickAid(page, 'createAccountSubmitButton');
   return waitAuthOutcome(page);
 }
@@ -707,14 +707,14 @@ async function fillPrompt(page, box, answer) {
 async function fillRadio(box, answer, options) {
   const i = pickOption(answer, options);
   if (i === -1) return { ok: false, options };
-  await box.locator('input[type="radio"]').nth(i).check({ force: true });
+  await tick(box.locator('input[type="radio"]').nth(i));
   return { ok: true, chose: options[i] };
 }
 
 async function fillCheckboxes(box, answer, options) {
   const i = pickOption(answer, options);
   if (i === -1) return { ok: false, options };
-  await box.locator('input[type="checkbox"]').nth(i).check({ force: true });
+  await tick(box.locator('input[type="checkbox"]').nth(i));
   return { ok: true, chose: options[i] };
 }
 
@@ -738,6 +738,20 @@ async function fillText(page, box, kind, answer) {
   await loc.fill(answer);
   await page.keyboard.press('Tab').catch(() => {});
   return { ok: true, chose: answer };
+}
+
+/** Tick a checkbox or radio. Some Workday boxes ignore .check(); click the box (then its label) instead. */
+async function tick(locator) {
+  try {
+    await locator.check({ force: true });
+    return;
+  } catch {
+    // fall through to clicking
+  }
+  await locator.click({ force: true }).catch(() => {});
+  if (await locator.isChecked().catch(() => false)) return;
+  const id = await locator.getAttribute('id').catch(() => null);
+  if (id) await locator.page().locator(`label[for="${id}"]`).first().click({ force: true }).catch(() => {});
 }
 
 /** An answer may list fallbacks ("Career Site || Company Website || LinkedIn"); use the first one the form accepts. */
@@ -768,7 +782,7 @@ async function applyOneAnswer(page, field, answer) {
       return { ok: true, chose: field.options[i] };
     }
     case 'checkbox': {
-      if (/^(yes|true|checked|y)$/i.test(answer)) await box.locator('input[type="checkbox"]').first().check({ force: true });
+      if (/^(yes|true|checked|y)$/i.test(answer)) await tick(box.locator('input[type="checkbox"]').first());
       return { ok: true, chose: answer };
     }
     default: return { ok: false };
@@ -886,7 +900,7 @@ async function fillWorkExperience(page, ctx) {
     await entry.locator(WX.company).first().fill(job.company).catch(() => {});
     await fillIfEmpty(WX.location, jobLocation(ctx.config, job));
     await fillIfEmpty(WX.description, description);
-    if (job.current) await entry.locator(WX.current).first().check({ force: true }).catch(() => {});
+    if (job.current) await tick(entry.locator(WX.current).first()).catch(() => {});
     await typeMonthYear(entry.locator(WX.start).first(), job.start);
     if (!job.current) await typeMonthYear(entry.locator(WX.end).first(), job.end);
     await page.keyboard.press('Tab').catch(() => {});
@@ -915,7 +929,7 @@ async function fillPage(page, ctx) {
       if (field.kind === 'checkbox') {
         const resolved = ctx.resolve(field.label);
         if ((ctx.config.behavior?.accept_agreements !== false && isAgreementLabel(field.label)) || /^(yes|true)$/i.test(resolved?.answer ?? '')) {
-          await page.locator(`[data-ca-field="${field.idx}"] input[type="checkbox"]`).first().check({ force: true });
+          await tick(page.locator(`[data-ca-field="${field.idx}"] input[type="checkbox"]`).first());
           ctx.say(`  ✓ ${field.label.slice(0, 80)}`);
           await pause();
         }

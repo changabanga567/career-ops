@@ -120,6 +120,13 @@ check('pickOption: partial and token matches, no wild guesses', () => {
   assert.equal(pickOption('', ['Yes']), -1);
 });
 
+check('"No" never picks a yes-option that merely contains "not"', () => {
+  const generac = ['I IDENTIFY AS ONE OR MORE OF THE CLASSIFICATIONS OF PROTECTED VETERAN', 'I IDENTIFY AS A VETERAN, JUST NOT A PROTECTED VETERAN', 'I AM NOT A VETERAN', 'I DO NOT WISH TO SELF-IDENTIFY'];
+  assert.equal(pickOption('No', generac), 2);
+  assert.equal(pickOption('No', ['I identify as a veteran, just not a protected veteran', 'Decline']), -1, 'no credible no-option → ask');
+  assert.equal(pickOption('Yes', ['I identify as a protected veteran', 'I am not a veteran']), -1, 'yes never guesses');
+});
+
 check('pickOption never matches on a shared generic word like "degree"', () => {
   const degrees = ['High School Diploma', 'Associates Degree', 'Bachelors', 'Masters Degree'];
   assert.equal(pickOption("Bachelor's Degree", degrees), 2, 'apostrophes ignored; "degree" alone never matches Associates');
