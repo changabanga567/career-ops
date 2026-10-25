@@ -429,6 +429,7 @@ async function pageText(page) {
 
 const CONFIRM_RE = /application (has been |was )?(successfully )?submitted|thank you for (applying|your application|your interest)|successfully applied/i;
 const ALREADY_RE = /you('ve| have) already applied|already submitted an application/i;
+const WORKDAY_DOWN_RE = /workday is currently unavailable|service interruption|scheduled maintenance/i;
 const WORKDAY_GLITCH_RE = /something went wrong[\s\S]{0,80}refresh the page/i;
 const CLOSED_RE = /page you are looking for (doesn['’]?t|does not) exist|job (posting )?(is )?no longer (available|accepting)|this (job|position|posting|requisition) (has been |is )?(closed|filled|removed|expired)|no longer accepting applications/i;
 const VERIFY_RE = /verify your (email|account)|verification (email|link)|check your (email|inbox)|activate your account/i;
@@ -1293,12 +1294,19 @@ async function runJob(browser, job, ctx) {
   ctx.uploadName = job.role ? resumeFileName(ctx.config.daily?.resume_prefix ?? '', job.role) : null;
   const keepOpen = () => !ctx.headless && ctx.prompt;
   try {
+    const outage = async () => WORKDAY_DOWN_RE.test(await pageText(page));
     if ((await postingStatus(page, job.url)) === 'closed') return { status: 'closed', errors: ['Workday says this posting is gone or not taking applications'] };
     const started = await startApplication(page, job.url);
     if (started === 'already_applied') return { status: 'already_applied' };
     if (started === 'closed') return { status: 'closed', screenshot: await screenshot(page, job.url, 'closed') };
     ctx.reopen = () => startApplication(page, job.url);
-    await authenticate(page, ctx.creds, ctx);
+    if (await outage()) return { status: 'workday_down', errors: ['this Workday site is down for maintenance — retry later'], screenshot: await screenshot(page, job.url, 'workday-down') };
+    try {
+      await authenticate(page, ctx.creds, ctx);
+    } catch (err) {
+      if (await outage()) return { status: 'workday_down', errors: ['this Workday site is down for maintenance — retry later'], screenshot: await screenshot(page, job.url, 'workday-down') };
+      throw err;
+    }
     await settle(page);
 
     let lastStep = '';
