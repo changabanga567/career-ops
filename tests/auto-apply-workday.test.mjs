@@ -15,7 +15,7 @@ import {
   splitName,
   workdayPasswordProblems,
 } from '../lib/workday-answers.mjs';
-import { blacklistHit, findReportPdf, isWorkdayUrl, parseBatchFile, parseBlacklist, parseCli, selectTrackerJobs, urlKey } from '../auto-apply-workday.mjs';
+import { blacklistHit, findReportPdf, isWorkdayUrl, parseBatchFile, parseBlacklist, parseCli, selectTrackerJobs, urlKey, workdayPostingParts } from '../auto-apply-workday.mjs';
 import { pass, fail } from './helpers.mjs';
 
 console.log('\nWorkday auto-apply answers');
@@ -309,4 +309,12 @@ check('"aptitude" in a company list is not an apartment number', () => {
   const r = createResolver({ config: {}, profile });
   assert.equal(r('Have you ever worked for any Vizient companies? They include Sg2, aptitude, Apexus and Provista.')?.key, 'previously_employed');
   assert.equal(r('Apt, Suite, etc.')?.key ?? 'none', 'none', 'blank address line 2 has no answer');
+});
+
+check('posting parts: site root, requisition id and CXS URL for draft lookup and the canApply check', () => {
+  const p = workdayPostingParts('https://vizient.wd1.myworkdayjobs.com/en-US/vizient_careers/job/Irving-TX-75062-Vizient-Corporate-HQ/Sr-Program-Services-Manager_34618R');
+  assert.equal(p.siteRoot, 'https://vizient.wd1.myworkdayjobs.com/vizient_careers');
+  assert.equal(p.reqId, '34618R');
+  assert.equal(p.cxs, 'https://vizient.wd1.myworkdayjobs.com/wday/cxs/vizient/vizient_careers/job/Irving-TX-75062-Vizient-Corporate-HQ/Sr-Program-Services-Manager_34618R');
+  assert.equal(workdayPostingParts('https://hp.wd5.myworkdayjobs.com/externalcareersite/job/X/Systems-Program-Manager_3168465-1').reqId, '3168465-1');
 });

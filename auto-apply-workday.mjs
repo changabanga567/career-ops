@@ -466,6 +466,62 @@ async function waitForAuthOrStep(page, timeout = 30_000) {
 
 // ── Start + authenticate ─────────────────────────────────────────────
 
+/** Site root and requisition id of a posting: https://acme.wd5.myworkdayjobs.com/en-US/site/job/City/Title_R123 → ('…/site', 'R123'). */
+export function workdayPostingParts(url) {
+  const u = new URL(url);
+  const parts = u.pathname.split('/').filter(Boolean);
+  if (/^[a-z]{2}-[A-Z]{2}$/.test(parts[0] ?? '')) parts.shift();
+  const site = parts[0] ?? '';
+  const last = parts[parts.length - 1] ?? '';
+  const reqId = last.includes('_') ? last.slice(last.lastIndexOf('_') + 1) : '';
+  const tenant = u.hostname.split('.')[0];
+  const jobPath = parts.slice(parts.indexOf('job')).join('/');
+  return { origin: u.origin, site, reqId, tenant, siteRoot: `${u.origin}/${site}`, cxs: `${u.origin}/wday/cxs/${tenant}/${site}/${jobPath}` };
+}
+
+/** Workday's own posting data: 'open', 'closed' (gone, or not taking applications), or 'unknown'. */
+async function postingStatus(page, url) {
+  try {
+    // The browser's own request context, so proxies and cookies match the apply flow.
+    const res = await page.request.get(workdayPostingParts(url).cxs, { headers: { accept: 'application/json' }, timeout: 20_000 });
+    if (res.status() === 404 || res.status() === 410) return 'closed';
+    if (!res.ok()) return 'unknown';
+    const info = (await res.json())?.jobPostingInfo;
+    if (!info) return 'closed';
+    return info.canApply === false ? 'closed' : 'open';
+  } catch {
+    return 'unknown';
+  }
+}
+
+/**
+ * An earlier attempt left a draft: Workday then refuses to create a second
+ * application (400 on …/jobapplications) and the page shows "Something went
+ * wrong". Reopen the draft from Candidate Home → Related Actions → Continue Application.
+ */
+async function resumeDraftFromHome(page, job, ctx) {
+  const { siteRoot, reqId } = workdayPostingParts(job.url);
+  if (!reqId) return false;
+  await page.goto(`${siteRoot}/userHome`, { waitUntil: 'domcontentloaded', timeout: NAV_TIMEOUT }).catch(() => {});
+  await settle(page);
+  if (await onAuthStep(page) || await visible(page.locator(aid('utilityButtonSignIn')))) {
+    if (!(await onAuthStep(page))) await clickAid(page, 'utilityButtonSignIn');
+    await settle(page);
+    await authenticate(page, ctx.creds, { ...ctx, reopen: null }).catch(() => {});
+    await page.goto(`${siteRoot}/userHome`, { waitUntil: 'domcontentloaded', timeout: NAV_TIMEOUT }).catch(() => {});
+    await settle(page);
+  }
+  const row = page.locator(aid('taskListRow')).filter({ hasText: reqId }).filter({ hasText: /not submitted/i }).first();
+  await row.waitFor({ timeout: 20_000 }).catch(() => {});
+  if (!(await row.count())) return false;
+  await row.locator(aid('actionMenuTarget')).first().click().catch(() => {});
+  await pause(600, 900);
+  if (!(await clickAid(page, 'continueApplication'))) return false;
+  ctx.say('  reopened the saved draft from Candidate Home');
+  await settle(page);
+  return true;
+}
+
 async function startApplication(page, url) {
   await page.goto(url, { waitUntil: 'domcontentloaded', timeout: NAV_TIMEOUT });
   await settle(page);
@@ -1209,10 +1265,17 @@ async function runJob(browser, job, ctx) {
   const context = await browser.newContext({ viewport: { width: 1280, height: 940 } });
   const page = await context.newPage();
   page.setDefaultTimeout(15_000);
+  // Workday refusing to create the application leaves it without an id: every save then 404s.
+  const noApplication = { seen: false };
+  page.on('response', (r) => {
+    const u = r.url();
+    if ((r.status() === 400 && r.request().method() === 'POST' && /\/jobapplications$/.test(u)) || /\/jobapplication\/undefined\//.test(u)) noApplication.seen = true;
+  });
   ctx.uploaded = false;
   ctx.uploadName = job.role ? resumeFileName(ctx.config.daily?.resume_prefix ?? '', job.role) : null;
   const keepOpen = () => !ctx.headless && ctx.prompt;
   try {
+    if ((await postingStatus(page, job.url)) === 'closed') return { status: 'closed', errors: ['Workday says this posting is gone or not taking applications'] };
     const started = await startApplication(page, job.url);
     if (started === 'already_applied') return { status: 'already_applied' };
     if (started === 'closed') return { status: 'closed', screenshot: await screenshot(page, job.url, 'closed') };
@@ -1231,9 +1294,13 @@ async function runJob(browser, job, ctx) {
       if (WORKDAY_GLITCH_RE.test(text)) {
         if (refreshes >= 2) return { status: 'stuck', errors: ['Workday kept showing "Something went wrong"'], screenshot: await screenshot(page, job.url, 'workday-error') };
         refreshes++;
+        if (noApplication.seen) {
+          // Workday would not create an application: resume the draft an earlier attempt left, or skip the job.
+          noApplication.seen = false;
+          if (await resumeDraftFromHome(page, job, ctx)) { i--; continue; }
+          return { status: 'unavailable', errors: ['Workday would not open an application for this job (no application id, no draft to resume) — skipped'], screenshot: await screenshot(page, job.url, 'unavailable') };
+        }
         ctx.say('  Workday error page — reopening the application');
-        // A plain reload can leave an empty shell or a form whose Next stays disabled:
-        // start again from the posting, which resumes the saved draft.
         await startApplication(page, job.url).catch(() => {});
         await settle(page);
         if (await onAuthStep(page)) await authenticate(page, ctx.creds, ctx);
@@ -1302,6 +1369,11 @@ async function runJob(browser, job, ctx) {
 function markClosed(report) {
   const r = spawnSync(process.execPath, [join(CODE_ROOT, 'set-status.mjs'), '--report', String(report), 'Discarded', '--note', 'posting closed (auto-apply found it gone)'], { encoding: 'utf-8' });
   return r.status === 0 ? 'tracker: marked Discarded (posting closed)' : `tracker not updated: ${(r.stderr || r.stdout).trim().split('\n')[0]}`;
+}
+
+function markUnavailable(report) {
+  const r = spawnSync(process.execPath, [join(CODE_ROOT, 'set-status.mjs'), '--report', String(report), 'Discarded', '--note', 'Workday would not open an application for this posting (no application id); skipped by auto-apply'], { encoding: 'utf-8' });
+  return r.status === 0 ? 'tracker: marked Discarded (application could not be opened)' : `tracker not updated: ${(r.stderr || r.stdout).trim().split('\n')[0]}`;
 }
 
 function markApplied(report, shot, via = 'Workday') {
@@ -1403,6 +1475,7 @@ async function main() {
       }
       if (result.status === 'submitted' && job.report) result.tracker = markApplied(job.report, result.screenshot);
       if (result.status === 'closed' && job.report) result.tracker = markClosed(job.report);
+      if (result.status === 'unavailable' && job.report) result.tracker = markUnavailable(job.report);
       logResult({ url: job.url, report: job.report ?? null, pdf: job.pdfPath, ...result });
       summary.push({ url: job.url, ...result });
       console.log(`  → ${result.status}${result.questions ? `: ${result.questions.join(' · ')}` : ''}${result.errors?.length ? `: ${result.errors.join(' · ')}` : ''}`);
@@ -1418,7 +1491,7 @@ async function main() {
   for (const s of summary) console.log(`  ${s.status.padEnd(18)} ${s.url}`);
   const needInput = summary.filter((s) => s.status === 'needs_input');
   if (needInput.length) console.log('\nAdd answers for the questions above to config/auto-apply.yml → questions:, then rerun.');
-  if (summary.some((s) => !['submitted', 'ready_for_review', 'already_applied', 'skipped_duplicate', 'closed'].includes(s.status))) process.exitCode = 2;
+  if (summary.some((s) => !['submitted', 'ready_for_review', 'already_applied', 'skipped_duplicate', 'closed', 'unavailable'].includes(s.status))) process.exitCode = 2;
 }
 
 if (isMainModule(import.meta.url)) {
