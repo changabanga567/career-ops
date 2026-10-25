@@ -746,15 +746,22 @@ async function fillDropdown(page, box, answer) {
     await page.keyboard.press('Escape');
     return { ok: false, options: [...seen] };
   }
-  await loc.nth(i).scrollIntoViewIfNeeded().catch(() => {});
+  // Click by text, not position: the list can re-render between reading and clicking.
+  const want = texts[i];
+  const target = page.locator('[role="listbox"] [role="option"]:visible').filter({ hasText: want })
+    .filter({ hasText: new RegExp(`^\\s*${want.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}\\s*$`) }).first();
   try {
-    await loc.nth(i).click({ timeout: 8000 });
+    await target.scrollIntoViewIfNeeded().catch(() => {});
+    await target.click({ timeout: 8000 });
   } catch {
     await page.keyboard.press('Escape').catch(() => {});
     return { ok: false, options: [...seen] };
   }
   await anyList.first().waitFor({ state: 'hidden', timeout: 3000 }).catch(() => {});
-  return { ok: true, chose: texts[i] };
+  // Verify the dropdown now shows what was meant.
+  const shown = (await button.innerText().catch(() => '')).replace(/\s+/g, ' ').trim();
+  if (shown && shown !== want) return { ok: false, options: [...seen], error: `picked "${shown}" instead of "${want}"` };
+  return { ok: true, chose: want };
 }
 
 /** True once a prompt widget really holds a value ("1 item selected", a pill, or a non-empty selection label). */
@@ -1149,7 +1156,31 @@ async function findSubmit(page) {
   return (await visible(byRole)) ? byRole : null;
 }
 
+async function nextDisabled(page) {
+  return page.locator(`${aid('pageFooterNextButton')}, ${aid('bottom-navigation-next-button')}`).first()
+    .evaluate((el) => el.disabled || el.getAttribute('aria-disabled') === 'true').catch(() => false);
+}
+
+/** A reopened draft can keep Save disabled until a field is edited: retype one filled text box. */
+async function enableNext(page) {
+  for (let t = 0; t < 10 && (await nextDisabled(page)); t++) await pause(800, 1000);
+  if (!(await nextDisabled(page))) return;
+  const boxes = page.locator('[data-automation-id^="formField-"] input[type="text"]:visible');
+  for (let i = 0; i < Math.min(await boxes.count(), 5); i++) {
+    const box = boxes.nth(i);
+    const value = await box.inputValue().catch(() => '');
+    if (!value) continue;
+    await box.click({ force: true }).catch(() => {});
+    await box.fill('').catch(() => {});
+    await box.pressSequentially(value, { delay: 30 }).catch(() => {});
+    await box.press('Tab').catch(() => {});
+    await pause(800, 1200);
+    if (!(await nextDisabled(page))) return;
+  }
+}
+
 async function clickNext(page) {
+  await enableNext(page);
   if (await clickAid(page, ['pageFooterNextButton', 'bottom-navigation-next-button'])) return true;
   const btn = page.getByRole('button', { name: /^(save and continue|next|continue)$/i }).first();
   if (await visible(btn)) {
