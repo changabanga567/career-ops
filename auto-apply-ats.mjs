@@ -59,6 +59,7 @@ Fills a Greenhouse, Lever or Ashby application and stops before Submit.
   --answers FILE   extra YAML list of {match, answer} rules for this run,
                    checked before config/auto-apply.yml (job-specific essays)
   --code-wait MIN  minutes to wait for an emailed security code (default 6)
+  --parallel N     run N jobs at once (default 3 when nothing will be asked)
   --submit         click Submit (default: stop before it)
   --headless       run without a visible window (implies --no-prompt)
   --no-prompt      never ask in the terminal; unanswered required questions
@@ -72,7 +73,7 @@ export function isAtsUrl(url) {
 }
 
 export function parseCli(argv) {
-  const opts = { jobs: [], submit: false, headless: false, prompt: true, force: false, dryRun: false, help: false, fromTracker: false, limit: null, minScore: null, answers: null, codeWait: 6 };
+  const opts = { jobs: [], submit: false, headless: false, prompt: true, force: false, dryRun: false, help: false, fromTracker: false, limit: null, minScore: null, answers: null, codeWait: 6, parallel: null };
   let url = null;
   let pdf = null;
   let report = null;
@@ -96,6 +97,7 @@ export function parseCli(argv) {
       case '--min-score': opts.minScore = Number(value()); break;
       case '--answers': opts.answers = value(); break;
       case '--code-wait': opts.codeWait = Number(value()); break;
+      case '--parallel': opts.parallel = Number(value()); break;
       case '--submit': opts.submit = true; break;
       case '--headless': opts.headless = true; opts.prompt = false; break;
       case '--no-prompt': opts.prompt = false; break;
@@ -112,6 +114,7 @@ export function parseCli(argv) {
   if (opts.limit != null && !(Number.isInteger(opts.limit) && opts.limit > 0)) throw new Error('--limit must be a positive whole number');
   if (opts.minScore != null && Number.isNaN(opts.minScore)) throw new Error('--min-score must be a number');
   if (!(opts.codeWait >= 0)) throw new Error('--code-wait must be a number of minutes');
+  if (opts.parallel != null && !(Number.isInteger(opts.parallel) && opts.parallel >= 1 && opts.parallel <= 8)) throw new Error('--parallel must be a whole number from 1 to 8');
   if (opts.jobs.length === 0 && !opts.fromTracker) throw new Error('give --url, --batch or --from-tracker');
   return opts;
 }
@@ -711,34 +714,47 @@ async function main() {
   const { chromium } = await import('playwright');
   const browser = await chromium.launch(freshLaunchOptions({ headless: opts.headless }));
   const summary = [];
-  try {
-    for (const job of opts.jobs) {
-      console.log(`\n▶ ${job.url}`);
-      if (!opts.force && alreadySubmitted(job.url)) {
-        console.log('  already submitted (data/auto-apply/log.jsonl) — skipping; --force to redo');
-        summary.push({ url: job.url, status: 'skipped_duplicate' });
-        continue;
-      }
-      ctx.vendor = atsVendorOf(job.url);
-      ctx.slug = boardSlug(job.url);
-      ctx.employer = job.company || ctx.slug;
-      ctx.pdfPath = job.pdfPath;
-      ctx.uploadName = resumeFileName(prefix, job.role);
-      ctx.prefix = prefix;
-      ctx.role = job.role;
-      // Resume only: the candidate does not send cover letters (2026-10-25).
-      ctx.coverPath = null;
-      ctx.refreshResolver();
-      const result = await runAtsJob(browser, job, ctx);
-      const via = { greenhouse: 'Greenhouse', lever: 'Lever', ashby: 'Ashby' }[ctx.vendor];
-      if (result.status === 'submitted' && job.report) result.tracker = markApplied(job.report, result.screenshot, via);
-      if (result.status === 'closed' && job.report) result.tracker = markClosed(job.report);
-      logResult({ url: job.url, report: job.report ?? null, pdf: job.pdfPath, vendor: ctx.vendor, ...result });
-      summary.push({ url: job.url, ...result });
-      console.log(`  → ${result.status}${result.questions ? `: ${result.questions.join(' · ')}` : ''}${result.errors?.length ? `: ${result.errors.join(' · ')}` : ''}`);
-      if (result.tracker) console.log(`  ${result.tracker}`);
-      await pause(1500, 3000);
+  // Asking in the terminal needs one job at a time; otherwise several boards run side by side.
+  const parallel = ctx.prompt || ctx.keepOpen ? 1 : (opts.parallel ?? 3);
+  if (parallel > 1) console.log(`running ${parallel} jobs at a time`);
+  const processJob = async (job) => {
+    const slug = boardSlug(job.url);
+    const say = parallel > 1 ? (msg) => console.log(`[${slug}] ${String(msg).trimStart()}`) : (msg) => console.log(msg);
+    say(parallel > 1 ? `▶ ${job.url}` : `\n▶ ${job.url}`);
+    if (!opts.force && alreadySubmitted(job.url)) {
+      say('  already submitted (data/auto-apply/log.jsonl) — skipping; --force to redo');
+      summary.push({ url: job.url, status: 'skipped_duplicate' });
+      return;
     }
+    const jctx = {
+      ...ctx,
+      say,
+      vendor: atsVendorOf(job.url),
+      slug,
+      employer: job.company || slug,
+      pdfPath: job.pdfPath,
+      uploadName: resumeFileName(prefix, job.role),
+      prefix,
+      role: job.role,
+      // Resume only: the candidate does not send cover letters (2026-10-25).
+      coverPath: null,
+    };
+    jctx.refreshResolver = () => { jctx.resolve = createResolver({ config: runConfig, profile, learned: jctx.learned, employer: jctx.employer, education: jctx.education }); };
+    jctx.refreshResolver();
+    const result = await runAtsJob(browser, job, jctx);
+    const via = { greenhouse: 'Greenhouse', lever: 'Lever', ashby: 'Ashby' }[jctx.vendor];
+    if (result.status === 'submitted' && job.report) result.tracker = markApplied(job.report, result.screenshot, via);
+    if (result.status === 'closed' && job.report) result.tracker = markClosed(job.report);
+    logResult({ url: job.url, report: job.report ?? null, pdf: job.pdfPath, vendor: jctx.vendor, ...result });
+    summary.push({ url: job.url, ...result });
+    say(`  → ${result.status}${result.questions ? `: ${result.questions.join(' · ')}` : ''}${result.errors?.length ? `: ${result.errors.join(' · ')}` : ''}`);
+    if (result.tracker) say(`  ${result.tracker}`);
+  };
+  try {
+    const queue = [...opts.jobs];
+    await Promise.all(Array.from({ length: Math.min(parallel, queue.length) }, async () => {
+      while (queue.length) await processJob(queue.shift());
+    }));
   } finally {
     rl?.close();
     if (!ctx.keepOpen) await browser.close().catch(() => {});

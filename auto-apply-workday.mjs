@@ -77,6 +77,8 @@ Fills a Workday application end to end and stops on the Review page.
   --limit N        with --from-tracker: at most N jobs this run
   --min-score X    with --from-tracker: skip rows scored below X (e.g. 4.0);
                    unscored (N/A) rows are not skipped
+  --parallel N     run N jobs at once (default 3 headless or --no-prompt,
+                   1 when it may ask you questions)
   --answers FILE   extra YAML list of {match, answer} rules for this run,
                    checked before config/auto-apply.yml (job-specific answers)
   --submit         click Submit on the Review page (default: stop and wait)
@@ -93,7 +95,7 @@ Login:   WORKDAY_EMAIL / WORKDAY_PASSWORD in .env.`;
 // ── CLI ──────────────────────────────────────────────────────────────
 
 export function parseCli(argv) {
-  const opts = { jobs: [], submit: false, headless: false, prompt: true, force: false, dryRun: false, help: false, fromTracker: false, limit: null, minScore: null, answers: null };
+  const opts = { jobs: [], submit: false, headless: false, prompt: true, force: false, dryRun: false, help: false, fromTracker: false, limit: null, minScore: null, answers: null, parallel: null };
   let url = null;
   let pdf = null;
   let report = null;
@@ -114,6 +116,7 @@ export function parseCli(argv) {
       case '--limit': opts.limit = Number(value()); break;
       case '--min-score': opts.minScore = Number(value()); break;
       case '--answers': opts.answers = value(); break;
+      case '--parallel': opts.parallel = Number(value()); break;
       case '--submit': opts.submit = true; break;
       case '--headless': opts.headless = true; opts.prompt = false; break;
       case '--no-prompt': opts.prompt = false; break;
@@ -129,6 +132,7 @@ export function parseCli(argv) {
   if (batch) opts.jobs.push(...parseBatchFile(readFileSync(resolve(DATA_ROOT, batch), 'utf-8')));
   if (opts.limit != null && !(Number.isInteger(opts.limit) && opts.limit > 0)) throw new Error('--limit must be a positive whole number');
   if (opts.minScore != null && Number.isNaN(opts.minScore)) throw new Error('--min-score must be a number');
+  if (opts.parallel != null && !(Number.isInteger(opts.parallel) && opts.parallel >= 1 && opts.parallel <= 8)) throw new Error('--parallel must be a whole number from 1 to 8');
   if (opts.jobs.length === 0 && !opts.fromTracker) throw new Error('give --url, --batch or --from-tracker');
   return opts;
 }
@@ -499,24 +503,38 @@ async function postingStatus(page, url) {
  * application (400 on …/jobapplications) and the page shows "Something went
  * wrong". Reopen the draft from Candidate Home → Related Actions → Continue Application.
  */
-async function resumeDraftFromHome(page, job, ctx) {
+export async function resumeDraftFromHome(page, job, ctx) {
   const { siteRoot, reqId } = workdayPostingParts(job.url);
   if (!reqId) return false;
-  await page.goto(`${siteRoot}/userHome`, { waitUntil: 'domcontentloaded', timeout: NAV_TIMEOUT }).catch(() => {});
-  await settle(page);
-  if (await onAuthStep(page) || await visible(page.locator(aid('utilityButtonSignIn')))) {
-    if (!(await onAuthStep(page))) await clickAid(page, 'utilityButtonSignIn');
-    await settle(page);
-    await authenticate(page, ctx.creds, { ...ctx, reopen: null }).catch(() => {});
+  const openHome = async () => {
     await page.goto(`${siteRoot}/userHome`, { waitUntil: 'domcontentloaded', timeout: NAV_TIMEOUT }).catch(() => {});
     await settle(page);
+    // Signed out, Candidate Home redirects to …/login; wait for either the list or a sign-in form.
+    await page.locator(`${aid('taskListRow')}, ${aid('signInContent')}, ${aid('SignInWithEmailButton')}, input${aid('password')}`).first()
+      .waitFor({ timeout: 25_000 }).catch(() => {});
+  };
+  await openHome();
+  if (/\/login\b/.test(page.url()) || (await onAuthStep(page))) {
+    // Sign in only (the account exists: it owns the draft); never create one here.
+    await signIn(page, ctx.creds).catch(() => {});
+    await openHome();
   }
-  const row = page.locator(aid('taskListRow')).filter({ hasText: reqId }).filter({ hasText: /not submitted/i }).first();
+  // Candidate Home may drop a posting suffix: URL "…_3168465-1", Job Req "3168465".
+  const baseReq = reqId.replace(/-\d+$/, '');
+  const row = page.locator(aid('taskListRow')).filter({ hasText: baseReq }).filter({ hasText: /not submitted/i }).first();
   await row.waitFor({ timeout: 20_000 }).catch(() => {});
+  if (process.env.CA_DEBUG) ctx.say(`  [debug] home ${page.url()} rows=${await page.locator(aid('taskListRow')).count()} match=${await row.count()} req=${baseReq}`);
   if (!(await row.count())) return false;
-  await row.locator(aid('actionMenuTarget')).first().click().catch(() => {});
-  await pause(600, 900);
-  if (!(await clickAid(page, 'continueApplication'))) return false;
+  const item = page.locator(aid('continueApplication')).first();
+  for (let attempt = 0; attempt < 3 && !(await item.isVisible().catch(() => false)); attempt++) {
+    await row.locator(aid('actionMenuTarget')).first().click({ timeout: 8000 }).catch(() => {});
+    await item.waitFor({ timeout: 5000 }).catch(() => {});
+  }
+  if (!(await item.isVisible().catch(() => false))) {
+    ctx.say('  found the saved draft but could not open its Continue Application menu');
+    return false;
+  }
+  await item.click();
   ctx.say('  reopened the saved draft from Candidate Home');
   await settle(page);
   return true;
@@ -1154,7 +1172,7 @@ async function fillPage(page, ctx) {
       const result = await applyAnswer(page, field, resolved.answer);
       if (result.ok) ctx.say(`  ${field.label.slice(0, 60)} → ${String(result.chose).slice(0, 60)}`);
       else if (field.required && pass === 1) unanswered.push({ ...field, options: result.options ?? field.options, tried: resolved.answer });
-      else if (!result.ok) ctx.say(`  ! no option matched "${resolved.answer}" for "${field.label.slice(0, 60)}"`);
+      else if (!result.ok) ctx.say(`  ! no option matched "${resolved.answer}" for "${field.label.slice(0, 60)}"${result.options?.length ? ` [options: ${result.options.filter(Boolean).slice(0, 12).join(' / ')}]` : ''}`);
       await pause();
     }
   }
@@ -1297,7 +1315,14 @@ async function runJob(browser, job, ctx) {
         if (noApplication.seen) {
           // Workday would not create an application: resume the draft an earlier attempt left, or skip the job.
           noApplication.seen = false;
-          if (await resumeDraftFromHome(page, job, ctx)) { i--; continue; }
+          if (await resumeDraftFromHome(page, job, ctx)) {
+            // The draft reopens on a step already seen: that is a fresh start, not a stuck step.
+            lastStep = '';
+            repeats = 0;
+            await pause(3000, 4000);
+            i--;
+            continue;
+          }
           return { status: 'unavailable', errors: ['Workday would not open an application for this job (no application id, no draft to resume) — skipped'], screenshot: await screenshot(page, job.url, 'unavailable') };
         }
         ctx.say('  Workday error page — reopening the application');
@@ -1451,37 +1476,47 @@ async function main() {
   };
   ctx.refreshResolver = () => { ctx.resolve = createResolver({ config, profile, learned: ctx.learned, employer: ctx.employer, education: ctx.education }); };
   ctx.refreshResolver();
+  // Asking in the terminal needs one job at a time; otherwise several tenants run side by side.
+  const parallel = ctx.prompt ? 1 : (opts.parallel ?? 3);
+  if (parallel > 1) console.log(`running ${parallel} jobs at a time`);
 
   const { chromium } = await import('playwright');
   const browser = await chromium.launch(freshLaunchOptions({ headless: opts.headless }));
   const summary = [];
-  try {
-    for (const job of opts.jobs) {
-      console.log(`\n▶ ${job.url}`);
-      if (!opts.force && alreadySubmitted(job.url)) {
-        console.log('  already submitted (data/auto-apply/log.jsonl) — skipping; --force to redo');
-        summary.push({ url: job.url, status: 'skipped_duplicate' });
-        continue;
-      }
-      ctx.employer = job.company || (() => { try { return new URL(job.url).hostname.split('.')[0]; } catch { return ''; } })();
-      ctx.refreshResolver();
-      let result = await runJob(browser, job, ctx);
-      // A draft reopened after a Workday error page can keep Save disabled for the rest of that
-      // browser session; a clean session resumes it normally.
-      if (result.status === 'stuck' && (result.errors ?? []).some((e) => /next button disabled|no next/i.test(e))) {
-        console.log('  stuck in this session — retrying once in a fresh browser session');
-        await pause(3000, 5000);
-        result = await runJob(browser, job, ctx);
-      }
-      if (result.status === 'submitted' && job.report) result.tracker = markApplied(job.report, result.screenshot);
-      if (result.status === 'closed' && job.report) result.tracker = markClosed(job.report);
-      if (result.status === 'unavailable' && job.report) result.tracker = markUnavailable(job.report);
-      logResult({ url: job.url, report: job.report ?? null, pdf: job.pdfPath, ...result });
-      summary.push({ url: job.url, ...result });
-      console.log(`  → ${result.status}${result.questions ? `: ${result.questions.join(' · ')}` : ''}${result.errors?.length ? `: ${result.errors.join(' · ')}` : ''}`);
-      if (result.tracker) console.log(`  ${result.tracker}`);
-      await pause(1500, 3000);
+  // Each job gets its own context and browser session, so several tenants can run at once.
+  const processJob = async (job) => {
+    const tag = (() => { try { return new URL(job.url).hostname.split('.')[0]; } catch { return 'job'; } })();
+    const say = parallel > 1 ? (msg) => console.log(`[${tag}] ${String(msg).trimStart()}`) : (msg) => console.log(msg);
+    say(parallel > 1 ? `▶ ${job.url}` : `\n▶ ${job.url}`);
+    if (!opts.force && alreadySubmitted(job.url)) {
+      say('  already submitted (data/auto-apply/log.jsonl) — skipping; --force to redo');
+      summary.push({ url: job.url, status: 'skipped_duplicate' });
+      return;
     }
+    const jctx = { ...ctx, say, employer: job.company || tag };
+    jctx.refreshResolver = () => { jctx.resolve = createResolver({ config, profile, learned: jctx.learned, employer: jctx.employer, education: jctx.education }); };
+    jctx.refreshResolver();
+    let result = await runJob(browser, job, jctx);
+    // A draft reopened after a Workday error page can keep Save disabled for the rest of that
+    // browser session; a clean session resumes it normally.
+    if (result.status === 'stuck' && (result.errors ?? []).some((e) => /next button disabled|no next/i.test(e))) {
+      say('  stuck in this session — retrying once in a fresh browser session');
+      await pause(3000, 5000);
+      result = await runJob(browser, job, jctx);
+    }
+    if (result.status === 'submitted' && job.report) result.tracker = markApplied(job.report, result.screenshot);
+    if (result.status === 'closed' && job.report) result.tracker = markClosed(job.report);
+    if (result.status === 'unavailable' && job.report) result.tracker = markUnavailable(job.report);
+    logResult({ url: job.url, report: job.report ?? null, pdf: job.pdfPath, ...result });
+    summary.push({ url: job.url, ...result });
+    say(`  → ${result.status}${result.questions ? `: ${result.questions.join(' · ')}` : ''}${result.errors?.length ? `: ${result.errors.join(' · ')}` : ''}`);
+    if (result.tracker) say(`  ${result.tracker}`);
+  };
+  try {
+    const queue = [...opts.jobs];
+    await Promise.all(Array.from({ length: Math.min(parallel, queue.length) }, async () => {
+      while (queue.length) await processJob(queue.shift());
+    }));
   } finally {
     rl?.close();
     await browser.close().catch(() => {});

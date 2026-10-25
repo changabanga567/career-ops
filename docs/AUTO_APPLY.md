@@ -55,6 +55,14 @@ With `--headless` or `--no-prompt`, it skips that job and logs it as `needs_inpu
 
 Exit code 2 means at least one job did not end as submitted, ready for review, or already applied.
 
+## Speed
+
+Unattended runs (`--headless` or `--no-prompt`) work on 3 jobs at once, each in its own browser session; set `--parallel N` (1–8) to change that. A Workday application takes about 1–5 minutes, a Greenhouse/Lever/Ashby one about 1 minute. Runs that may ask you questions in the terminal go one job at a time.
+
+## Drafts and "Something went wrong"
+
+If an earlier attempt left a saved draft, Workday refuses to create a second application and shows "Something went wrong" with Save disabled. The driver notices this (a rejected create request, or saves sent to an application with no id), opens the draft from Candidate Home → Continue Application, and carries on. With no draft to resume, the job is marked `unavailable` (Discarded in the tracker) and skipped. Before starting, it also asks Workday's posting API whether the job still takes applications; a gone or closed posting is skipped as `closed`.
+
 ## Greenhouse, Lever and Ashby
 
 `auto-apply-ats.mjs` does the same for `job-boards.greenhouse.io`, `jobs.lever.co` and `jobs.ashbyhq.com`. These boards need no account. It takes the same flags as the Workday script, plus `--role` (the job title in the uploaded file name) and `--answers FILE` (extra `{match, answer}` rules for this run, such as a "Why this company?" answer).
