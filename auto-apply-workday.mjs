@@ -866,17 +866,26 @@ async function fillWorkExperience(page, ctx) {
       if ((await titleInputs.count()) <= i) break;
     }
     const titleInput = titleInputs.nth(i);
-    if ((await titleInput.inputValue().catch(() => '')).trim()) continue;
     // The entry is the nearest ancestor that holds exactly this one job-title field.
     const entry = titleInput.locator('xpath=ancestor::*[count(.//input[contains(@id,"--jobTitle")] | .//*[@data-automation-id="formField-jobTitle"]//input) = 1][last()]');
     const job = jobs[i];
+    const fillIfEmpty = async (selector, value) => {
+      const box = entry.locator(selector).first();
+      if (!value || !(await box.count()) || (await box.inputValue().catch(() => '')).trim()) return false;
+      await box.fill(value).catch(() => {});
+      return true;
+    };
+    const description = job.bullets?.length ? job.bullets.map((b) => `• ${b}`).join('\n').slice(0, 2000) : '';
+    if ((await titleInput.inputValue().catch(() => '')).trim()) {
+      // An entry Workday or an earlier run filled: only complete its empty optional parts.
+      const added = [await fillIfEmpty(WX.location, jobLocation(ctx.config, job)), await fillIfEmpty(WX.description, description)];
+      if (added.some(Boolean)) ctx.say(`  work experience ${i + 1}: completed location/description`);
+      continue;
+    }
     await titleInput.fill(job.title);
     await entry.locator(WX.company).first().fill(job.company).catch(() => {});
-    const where = jobLocation(ctx.config, job);
-    if (where) await entry.locator(WX.location).first().fill(where).catch(() => {});
-    if (job.bullets?.length) {
-      await entry.locator(WX.description).first().fill(job.bullets.map((b) => `• ${b}`).join('\n').slice(0, 2000)).catch(() => {});
-    }
+    await fillIfEmpty(WX.location, jobLocation(ctx.config, job));
+    await fillIfEmpty(WX.description, description);
     if (job.current) await entry.locator(WX.current).first().check({ force: true }).catch(() => {});
     await typeMonthYear(entry.locator(WX.start).first(), job.start);
     if (!job.current) await typeMonthYear(entry.locator(WX.end).first(), job.end);
