@@ -21,3 +21,9 @@ test('a short field answer does not match a joined field', () => {
   const o = ['Select One', 'Computer Science & Mathematics', 'Computer and Information Science'];
   assert.equal(o[pickOption('Computer Science', o)], o[2]);
 });
+
+test('numeric answers never land on a range with different numbers', () => {
+  assert.equal(pickOption('3 - 5 years', ['0 to 3 years', '5 to 7 years']), -1);
+  assert.equal(pickOption('3 - 5 years', ['0 to 3 years', '3 to 5 years']), 1);
+  assert.equal(pickOption('3-5 years', ['1-3 years', '3-5 years']), 1);
+});
