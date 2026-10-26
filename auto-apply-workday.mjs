@@ -943,10 +943,13 @@ async function fillDate(box, answer) {
     // Year-only widget: type just the four-digit year ("02/01/2020" into it used to read back as "2002").
     const year = box.locator(`input${aid('dateSectionYear-input')}`).first();
     if (!(await year.count())) return { ok: false };
-    await year.click();
+    // A "YYYY" overlay sometimes intercepts the pointer; fall back to a forced click, then focus.
+    await year.click({ timeout: 4000 }).catch(() => year.click({ force: true, timeout: 4000 })).catch(() => year.focus());
     await year.page().keyboard.press('Control+A').catch(() => {});
     await year.page().keyboard.type(d.yyyy, { delay: 90 });
     await year.page().keyboard.press('Tab').catch(() => {});
+    const shown = (await year.inputValue().catch(() => '')) || (await year.getAttribute('aria-valuetext').catch(() => ''));
+    if (shown !== d.yyyy) return { ok: false, error: `year box reads "${shown}" after typing ${d.yyyy}` };
     return { ok: true, chose: d.yyyy };
   }
   const hasDay = await box.locator(`input${aid('dateSectionDay-input')}`).count();
