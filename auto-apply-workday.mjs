@@ -943,6 +943,15 @@ async function fillRadio(box, answer, options) {
 }
 
 async function fillCheckboxes(box, answer, options) {
+  // "each: Monday || Tuesday || ..." ticks every listed option (availability days), not just the first match.
+  const each = /^each:\s*/i.exec(String(answer));
+  if (each) {
+    const wanted = String(answer).slice(each[0].length).split(ALTERNATIVES).map((w) => w.trim()).filter(Boolean);
+    const picks = [...new Set(wanted.map((w) => pickOption(w, options)).filter((i) => i !== -1))];
+    if (!picks.length) return { ok: false, options };
+    for (const i of picks) await tick(box.locator('input[type="checkbox"]').nth(i));
+    return { ok: true, chose: picks.map((i) => options[i]).join(', ') };
+  }
   const i = pickOption(answer, options);
   if (i === -1) return { ok: false, options };
   await tick(box.locator('input[type="checkbox"]').nth(i));
@@ -1007,8 +1016,9 @@ export function nextBusinessDay(from = new Date()) {
 
 /** An answer may list fallbacks ("Career Site || Company Website || LinkedIn"); use the first one the form accepts. */
 async function applyAnswer(page, field, answer) {
-  const choices = String(answer).split(ALTERNATIVES).map((c) => c.trim()).filter(Boolean);
-  // A date field takes the first alternative that is a date ("Immediately || 10/26/2026").
+  // "each: A || B" is a multi-select answer for checkbox groups, applied whole.
+  if (/^each:/i.test(String(answer)) && field.kind === 'checkboxes') return applyOneAnswer(page, field, String(answer));
+  const choices = String(answer).replace(/^each:\s*/i, '').split(ALTERNATIVES).map((c) => c.trim()).filter(Boolean);
   // A date field takes the first alternative that is a date ("Immediately || 10/26/2026");
   // a bare "Immediately" on a date picker becomes the next business day.
   if (field.kind === 'date') {
