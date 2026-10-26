@@ -861,9 +861,9 @@ async function fillDropdown(page, box, answer) {
     const target = now.loc.nth(j);
     await target.scrollIntoViewIfNeeded().catch(() => {});
     await target.click({ timeout: 8000 });
-  } catch {
+  } catch (err) {
     await page.keyboard.press('Escape').catch(() => {});
-    return { ok: false, options: [...seen] };
+    return { ok: false, options: [...seen], error: `could not click "${want}": ${String(err?.message ?? err).split('\n')[0].slice(0, 80)}` };
   }
   await anyList.first().waitFor({ state: 'hidden', timeout: 3000 }).catch(() => {});
   // Verify the dropdown shows what was meant (its label may carry extra text around it).
@@ -1321,7 +1321,7 @@ async function fillPage(page, ctx) {
       const result = await applyAnswer(page, field, resolved.answer);
       if (result.ok) ctx.say(`  ${field.label.slice(0, 60)} → ${String(result.chose).slice(0, 60)}`);
       else if (field.required && pass === 1) unanswered.push({ ...field, options: result.options ?? field.options, tried: resolved.answer });
-      else if (!result.ok) ctx.say(`  ! no option matched "${resolved.answer}" for "${field.label.slice(0, 60)}"${result.options?.length ? ` [options: ${result.options.filter(Boolean).slice(0, 12).join(' / ')}]` : ''}`);
+      else if (!result.ok) ctx.say(`  ! no option matched "${resolved.answer}" for "${field.label.slice(0, 60)}"${result.error ? ` (${result.error})` : ''}${result.options?.length ? ` [options: ${result.options.filter(Boolean).slice(0, 12).join(' / ')}]` : ''}`);
       await pause();
     }
   }
