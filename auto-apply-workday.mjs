@@ -849,7 +849,7 @@ async function fillDropdown(page, box, answer) {
   }
   if (i === -1) {
     await page.keyboard.press('Escape');
-    return { ok: false, options: [...seen] };
+    return { ok: false, options: [...seen], error: `read ${JSON.stringify(texts.slice(0, 6))}` };
   }
   // Click by text, not position: the list can re-render between reading and clicking,
   // so look the option up again by its visible text right before the click.
