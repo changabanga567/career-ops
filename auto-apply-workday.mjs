@@ -980,11 +980,23 @@ async function tick(locator) {
   if (id) await locator.page().locator(`label[for="${id}"]`).first().click({ force: true }).catch(() => {});
 }
 
+/** MM/DD/YYYY of the next weekday in local time (TZ=America/Chicago in the launcher). */
+export function nextBusinessDay(from = new Date()) {
+  const d = new Date(from);
+  do d.setDate(d.getDate() + 1); while (d.getDay() === 0 || d.getDay() === 6);
+  return `${String(d.getMonth() + 1).padStart(2, '0')}/${String(d.getDate()).padStart(2, '0')}/${d.getFullYear()}`;
+}
+
 /** An answer may list fallbacks ("Career Site || Company Website || LinkedIn"); use the first one the form accepts. */
 async function applyAnswer(page, field, answer) {
   const choices = String(answer).split(ALTERNATIVES).map((c) => c.trim()).filter(Boolean);
   // A date field takes the first alternative that is a date ("Immediately || 10/26/2026").
-  if (field.kind === 'date') return applyOneAnswer(page, field, choices.find((c) => parseDate(c)) ?? choices[0] ?? '');
+  // A date field takes the first alternative that is a date ("Immediately || 10/26/2026");
+  // a bare "Immediately" on a date picker becomes the next business day.
+  if (field.kind === 'date') {
+    const asDate = choices.find((c) => parseDate(c)) ?? (/^(immediately|asap|now)$/i.test(choices[0] ?? '') ? nextBusinessDay() : choices[0]);
+    return applyOneAnswer(page, field, asDate ?? '');
+  }
   if (choices.length <= 1 || ['text', 'textarea', 'checkbox'].includes(field.kind)) return applyOneAnswer(page, field, choices[0] ?? '');
   // A dropdown tries every acceptable answer against one open list.
   if (field.kind === 'dropdown') return applyOneAnswer(page, field, answer);

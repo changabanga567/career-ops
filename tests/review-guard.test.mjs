@@ -83,6 +83,7 @@ test('a different bachelor degree or field blocks Submit', () => {
   assert.ok(validateReview(page({ field: 'Business Administration' }), facts).some((i) => /field of study/.test(i)));
   assert.ok(validateReview(page({ field: 'COMPUTER SCIENCE & MATHEMATICS' }), facts).some((i) => /field of study/.test(i)));
   assert.deepEqual(validateReview(page({ field: 'Computer and Information Science' }), facts), []);
+  assert.deepEqual(validateReview(page({ field: 'Computer Science or Computer Engineering' }), facts), []);
 });
 
 test('a salary range passes only when it holds the JD pay midpoint', () => {
