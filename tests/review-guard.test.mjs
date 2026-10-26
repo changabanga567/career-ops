@@ -117,3 +117,8 @@ test('jdPayRange reads labeled minimum/maximum pay lines', async () => {
   assert.equal(jdPayRange('Minimum Pay Range : 85000 Maximum Pay Range : 90000').target, 87500);
   assert.equal(jdPayRange('Competitive pay and benefits'), null);
 });
+
+test('category-prefixed field of study passes only when the field itself matches', () => {
+  assert.deepEqual(validateReview(page({ field: 'Engineering - Computer Science' }), facts).filter((i) => /field/.test(i)), []);
+  assert.ok(validateReview(page({ field: 'Engineering - Mechanical Engineering' }), facts).some((i) => /field/.test(i)));
+});
