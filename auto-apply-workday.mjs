@@ -645,6 +645,11 @@ async function createAccount(page, creds) {
   const terms = page.locator(`input${aid('createAccountCheckbox')}`).first();
   if (await terms.count()) await tick(terms).catch(() => {});
   await clickAid(page, 'createAccountSubmitButton');
+  // Some tenants (Target) cover the button with a click_filter overlay that takes the real click.
+  await pause(2500, 3000);
+  if (await visible(page.locator(`input${aid('verifyPassword')}`))) {
+    await page.locator(aid('click_filter')).first().click({ timeout: 10_000 }).catch(() => {});
+  }
   return waitAuthOutcome(page);
 }
 
