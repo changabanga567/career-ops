@@ -25,13 +25,13 @@ const facts = reviewFacts({
   salary: '1',
 });
 
-const page = ({ eduFrom = '2020', eduTo = '2024', jobFrom = '05/2022', salary = '1', gpa = '3.7', sideBySide = false } = {}) => [
+const page = ({ eduFrom = '2020', eduTo = '2024', jobFrom = '05/2022', salary = '1', gpa = '3.7', degree = 'Bachelors', field = 'Computer Science', sideBySide = false } = {}) => [
   'My Information', 'Legal Name', 'First Name', 'Sam', 'Last Name', 'Rivera', 'Email Address', 'sam@example.com',
   'Phone', '+1 (555) 1234567 (Mobile)',
   'My Experience', 'Work Experience 1', 'Job Title', 'Project Manager', 'Company', 'Acme', 'I currently work here', 'Yes', 'From', '02/2025',
   'Work Experience 2', 'Job Title', 'Project Manager', 'Company', 'Beta Traders',
   ...(sideBySide ? ['From _To', `${jobFrom} 02/2024`] : ['From', jobFrom, 'To', '02/2024']),
-  'Education', 'Education 1', 'School or University', 'State University', 'Overall Result (GPA)', gpa,
+  'Education', 'Education 1', 'School or University', 'State University', 'Degree', degree, 'Field of Study', field, 'Overall Result (GPA)', gpa,
   ...(sideBySide ? ['From _To (Actual or Expected)', `${eduFrom} ${eduTo}`] : ['From', eduFrom, 'To (Actual or Expected)', eduTo]),
   'Resume/CV', 'SamR-Project Manager.pdf',
   'Application Questions', 'What are your salary expectations for this role?*', salary,
@@ -71,4 +71,16 @@ test('reviewFacts reads schools, years and GPA from cv.md', () => {
   assert.deepEqual(facts.education.years.sort(), ['2020', '2024']);
   assert.equal(facts.education.gpa, '3.7');
   assert.ok(facts.education.schools.includes('State University'));
+});
+
+test('a different bachelor degree or field blocks Submit', () => {
+  for (const degree of ['BA', 'Bachelor of Arts (BA)', 'Bachelors in Progress', 'Bachelor of Education', 'B.S.M.E. - Bachelor of Science in Mechanical Engineering']) {
+    assert.ok(validateReview(page({ degree }), facts).some((i) => /degree shows/.test(i)), degree);
+  }
+  for (const degree of ['BS', "Bachelor's Degree", 'Bachelor of Science (BS)', 'BA, BS / Bachelor']) {
+    assert.deepEqual(validateReview(page({ degree }), facts), [], degree);
+  }
+  assert.ok(validateReview(page({ field: 'Business Administration' }), facts).some((i) => /field of study/.test(i)));
+  assert.ok(validateReview(page({ field: 'COMPUTER SCIENCE & MATHEMATICS' }), facts).some((i) => /field of study/.test(i)));
+  assert.deepEqual(validateReview(page({ field: 'Computer and Information Science' }), facts), []);
 });
