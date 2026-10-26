@@ -907,7 +907,9 @@ async function fillPromptOnce(page, box, answer) {
   }
   for (let depth = 0; depth < 3 && texts.length; depth++) {
     const i = pickOption(answer, texts);
-    const pick = i === -1 && depth > 0 && texts.length === 1 ? 0 : i;
+    // Category menus ("Partial List (First 500 Entries)" / "All"): drill into All when nothing matches yet.
+    const all = i === -1 ? texts.findIndex((t) => /^all$/i.test(t)) : -1;
+    const pick = all !== -1 ? all : i === -1 && depth > 0 && texts.length === 1 ? 0 : i;
     if (pick === -1) {
       await page.keyboard.press('Escape');
       return { ok: false, options: texts };
@@ -915,6 +917,14 @@ async function fillPromptOnce(page, box, answer) {
     const chose = texts[pick];
     await loc.nth(pick).click();
     await pause(700, 1000);
+    if (all !== -1) {
+      // Inside All: search the answer again within the category.
+      await input.fill(answer).catch(() => {});
+      await page.keyboard.press('Enter').catch(() => {});
+      await pause(700, 1000);
+      ({ loc, texts } = await visibleOptions(page));
+      continue;
+    }
     if (await promptHasSelection(box)) {
       await page.keyboard.press('Escape').catch(() => {});
       return { ok: true, chose };
