@@ -771,7 +771,8 @@ function scanFieldsInPage() {
 // ── Widget drivers ───────────────────────────────────────────────────
 
 async function visibleOptions(page) {
-  const loc = page.locator('[role="listbox"]:not([data-automation-id="selectedItemList"]) [role="option"]:visible, [data-automation-id="promptOption"]:visible');
+  // Selected-value chips of other prompts (the School box's "Florida International University") are promptOptions too: skip them.
+  const loc = page.locator('[role="listbox"]:not([data-automation-id="selectedItemList"]) [role="option"]:visible, [data-automation-id="promptOption"]:not([data-automation-id="selectedItemList"] *):visible');
   const texts = (await loc.allInnerTexts().catch(() => [])).map((t) => t.replace(/\s+/g, ' ').trim());
   return { loc, texts };
 }
