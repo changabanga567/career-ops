@@ -93,3 +93,13 @@ test('a salary range passes only when it holds the JD pay midpoint', () => {
   assert.ok(validateReview(page({ salary: '$90,001-$100,000' }), withJd).some((i) => /salary answer/.test(i)));
   assert.ok(validateReview(page({ salary: '$110,001+' }), facts).some((i) => /salary answer/.test(i)));
 });
+
+test('wrong yes/no meanings block Submit', () => {
+  const add = (q, v) => `${page()}\n${q}\n${v}`;
+  assert.ok(validateReview(add('Do you have the unrestricted right to work in the country to which you are applying?', 'No'), facts).some((i) => /work authorization/.test(i)));
+  assert.ok(validateReview(add('Are you authorized to work in the US without a sponsor visa?', 'No'), facts).some((i) => /work authorization/.test(i)));
+  assert.ok(validateReview(add('I acknowledge that I have read, reviewed and answered the above questions truthfully', 'No'), facts).some((i) => /attestation/.test(i)));
+  assert.ok(validateReview(add('Regarding future positions at Salesforce, please select one of the following options', 'Yes, I would like to receive communications about Salesforce'), facts).some((i) => /opt-in/.test(i)));
+  assert.deepEqual(validateReview(add('Will you now or in the future require sponsorship for employment visa status?', 'No'), facts), []);
+  assert.deepEqual(validateReview(add('Are you legally authorized to work in the United States?', 'Yes'), facts), []);
+});
