@@ -105,7 +105,7 @@ test('wrong yes/no meanings block Submit', () => {
 });
 
 test('employer ethics contact in page text passes; a wrong email field still blocks', () => {
-  const ok = page() + '\nQuestions? Contact ethicsoffice@acme.com';
+  const ok = page() + '\nQuestions? Contact ethicsoffice@acme.com or global-dataprotection@acme.com';
   assert.deepEqual(validateReview(ok, facts).filter((i) => /email/.test(i)), []);
   const bad = page().replace('Email Address\nsam@example.com', 'Email Address\nother@example.com');
   assert.ok(validateReview(bad, facts).some((i) => /email field shows "other@example.com"/.test(i)));
