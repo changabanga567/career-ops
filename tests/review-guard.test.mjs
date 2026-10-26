@@ -110,3 +110,10 @@ test('employer ethics contact in page text passes; a wrong email field still blo
   const bad = page().replace('Email Address\nsam@example.com', 'Email Address\nother@example.com');
   assert.ok(validateReview(bad, facts).some((i) => /email field shows "other@example.com"/.test(i)));
 });
+
+test('jdPayRange reads labeled minimum/maximum pay lines', async () => {
+  const { jdPayRange } = await import('../lib/workday-answers.mjs');
+  assert.equal(jdPayRange('Pay Type : Salaried  Minimum Pay Range  :  $75K      Maximum Pay Range  :  $81K').target, 78000);
+  assert.equal(jdPayRange('Minimum Pay Range : 85000 Maximum Pay Range : 90000').target, 87500);
+  assert.equal(jdPayRange('Competitive pay and benefits'), null);
+});
