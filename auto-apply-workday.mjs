@@ -1348,9 +1348,16 @@ async function nextDisabled(page) {
 async function enableNext(page) {
   for (let t = 0; t < 10 && (await nextDisabled(page)); t++) await pause(800, 1000);
   if (!(await nextDisabled(page))) return;
+  // A dropdown left open or focused (Phone Device Type) keeps Save disabled: close it and blur the form.
+  await page.keyboard.press('Escape').catch(() => {});
+  await page.locator('h2, h3').first().click({ force: true, timeout: 3000 }).catch(() => {});
+  await pause(800, 1200);
+  if (!(await nextDisabled(page))) return;
+  // Re-enter values so Workday re-validates: the phone number first, then the first few text boxes.
+  const phone = page.locator('input[data-automation-id="phone-number"]:visible, input[id*="phoneNumber"]:visible');
   const boxes = page.locator('[data-automation-id^="formField-"] input[type="text"]:visible');
-  for (let i = 0; i < Math.min(await boxes.count(), 5); i++) {
-    const box = boxes.nth(i);
+  const targets = [...(await phone.count() ? [phone.first()] : []), ...Array.from({ length: Math.min(await boxes.count(), 5) }, (_, i) => boxes.nth(i))];
+  for (const box of targets) {
     const value = await box.inputValue().catch(() => '');
     if (!value) continue;
     await box.click({ force: true }).catch(() => {});
