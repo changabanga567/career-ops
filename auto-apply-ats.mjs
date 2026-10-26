@@ -298,6 +298,14 @@ function pickCombo(alt, opts, field, { fuzzy = true } = {}) {
 }
 
 async function fillCombobox(page, field, answer) {
+  // "each: A || B": a multi-select takes every listed option (pick, reopen, pick the next).
+  if (/^each:/i.test(String(answer))) {
+    let n = 0;
+    for (const one of alternatives(String(answer).replace(/^each:\s*/i, ''))) {
+      if (await fillCombobox(page, field, one)) n++;
+    }
+    return n > 0;
+  }
   const input = page.locator(q(field.idx)).first();
   const alts = alternatives(answer);
   await input.click({ force: true });
@@ -372,12 +380,13 @@ async function applyField(page, field, answer, ctx) {
     }
     case 'checkboxes': {
       let any = false;
-      for (const alt of alternatives(answer)) {
+      const each = /^each:/i.test(String(answer));
+      for (const alt of alternatives(String(answer).replace(/^each:\s*/i, ''))) {
         const i = pickUnambiguous(alt, field.options);
         if (i === -1) continue;
         await tick(loc.nth(i));
         any = true;
-        break;
+        if (!each) break;
       }
       return any;
     }
@@ -678,7 +687,8 @@ function reportRole(num) {
   const file = readdirSync(dir).find((n) => n.startsWith(`${String(num).padStart(3, '0')}-`) && n.endsWith('.md'));
   if (!file) return '';
   const head = readFileSync(join(dir, file), 'utf-8').split('\n')[0];
-  return /[—-]\s*(.+)$/.exec(head)?.[1]?.trim() ?? '';
+  // "# skildai-careers - Technical Program Manager": the separator is a spaced dash; slugs can hold hyphens.
+  return /\s[—-]\s+(.+)$/.exec(head)?.[1]?.trim() ?? '';
 }
 
 async function main() {
