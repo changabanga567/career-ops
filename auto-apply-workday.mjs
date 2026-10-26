@@ -1247,7 +1247,9 @@ async function fillPage(page, ctx) {
         ctx.say(`  ! "${field.label.slice(0, 50)}" was ${field.value}, correcting`);
       } else if (field.value && field.kind !== 'checkbox') {
         // Keep a value Workday or an earlier run filled, unless it contradicts our answer (a draft can hold a wrong pick).
-        const mine = ['dropdown', 'radio', 'select'].includes(field.kind) ? ctx.resolve(field.label) : null;
+        // Education prompts too: a saved draft can hold a wrong degree ("BA") picked by an older run.
+        const eduPrompt = field.kind === 'prompt' && /^(degree|field of study|school or university)\b/i.test(field.label);
+        const mine = ['dropdown', 'radio', 'select'].includes(field.kind) || eduPrompt ? ctx.resolve(field.label) : null;
         const wanted = mine?.answer ? mine.answer.split(ALTERNATIVES) : [];
         if (!wanted.length || wanted.some((w) => pickOption(w, [field.value]) !== -1)) continue;
         ctx.say(`  ! "${field.label.slice(0, 50)}" was "${field.value}", correcting`);
