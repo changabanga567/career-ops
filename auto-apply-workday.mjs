@@ -716,6 +716,8 @@ function scanFieldsInPage() {
     const listboxBtn = el.querySelector('button[aria-haspopup="listbox"]');
     const prompt = el.querySelector('[data-automation-id="multiselectInputContainer"], input[data-uxi-widget-type="selectinput"], [data-automation-id="promptIcon"]');
     const month = el.querySelector('[data-automation-id="dateSectionMonth-input"]');
+    // Some date widgets (education years) have only a Year section; they are dates too, not text.
+    const yearOnly = !month && el.querySelector('[data-automation-id="dateSectionYear-input"]');
     const select = el.querySelector('select');
     const area = el.querySelector('textarea');
     const input = el.querySelector('input:not([type="hidden"]):not([type="radio"]):not([type="checkbox"]):not([type="file"])');
@@ -737,7 +739,7 @@ function scanFieldsInPage() {
       else label = `${label} ${own}`;
       field.label = label;
       field.value = boxes[0].checked ? 'checked' : '';
-    } else if (month) {
+    } else if (month || yearOnly) {
       field.kind = 'date';
       const part = (name) => el.querySelector(`[data-automation-id="dateSection${name}-input"]`)?.value || '';
       field.value = [part('Month'), part('Day'), part('Year')].filter(Boolean).join('/');
@@ -936,6 +938,16 @@ function parseDate(answer) {
 async function fillDate(box, answer) {
   const d = parseDate(answer);
   if (!d) return { ok: false };
+  if (!(await box.locator(`input${aid('dateSectionMonth-input')}`).count())) {
+    // Year-only widget: type just the four-digit year ("02/01/2020" into it used to read back as "2002").
+    const year = box.locator(`input${aid('dateSectionYear-input')}`).first();
+    if (!(await year.count())) return { ok: false };
+    await year.click();
+    await year.page().keyboard.press('Control+A').catch(() => {});
+    await year.page().keyboard.type(d.yyyy, { delay: 90 });
+    await year.page().keyboard.press('Tab').catch(() => {});
+    return { ok: true, chose: d.yyyy };
+  }
   const hasDay = await box.locator(`input${aid('dateSectionDay-input')}`).count();
   await typeDateDigits(box, hasDay ? `${d.mm}${d.dd}${d.yyyy}` : `${d.mm}${d.yyyy}`);
   return { ok: true, chose: answer };
