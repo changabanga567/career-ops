@@ -632,7 +632,11 @@ async function signIn(page, creds) {
 async function createAccount(page, creds) {
   await revealEmailForm(page);
   if (!(await visible(page.locator(`input${aid('verifyPassword')}`)))) {
-    await clickAid(page, ['createAccountLink']);
+    // Some tenants (Target) render "Create Account" as a plain link/button with no automation id.
+    if (!(await clickAid(page, ['createAccountLink']))) {
+      const byText = page.getByRole('button', { name: /^\s*create account\s*$/i }).or(page.getByRole('link', { name: /^\s*create account\s*$/i })).first();
+      if (await visible(byText)) await byText.click({ force: true }).catch(() => {});
+    }
     await settle(page);
     await page.locator(`input${aid('verifyPassword')}`).first().waitFor({ timeout: 15_000 }).catch(() => {});
   }
