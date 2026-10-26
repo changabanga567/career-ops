@@ -27,3 +27,12 @@ test('numeric answers never land on a range with different numbers', () => {
   assert.equal(pickOption('3 - 5 years', ['0 to 3 years', '3 to 5 years']), 1);
   assert.equal(pickOption('3-5 years', ['1-3 years', '3-5 years']), 1);
 });
+
+test('personal fields never answer questions about other people or long questions', async () => {
+  const { createResolver } = await import('../lib/workday-answers.mjs');
+  const r = createResolver({ config: { personal: { phone: '5551234567', email: 'sam@example.com', last_name: 'Rivera' } } });
+  assert.equal(r('Phone Number')?.answer, '5551234567');
+  assert.equal(r('List three business references (previous supervisors); include name, title, phone number and email address.'), null);
+  assert.equal(r('Do you have experience contacting customers via phone when email is not available?'), null);
+  assert.equal(r('If you marked Yes to having previously worked here, please list your email'), null);
+});

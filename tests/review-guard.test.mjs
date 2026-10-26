@@ -122,3 +122,8 @@ test('category-prefixed field of study passes only when the field itself matches
   assert.deepEqual(validateReview(page({ field: 'Engineering - Computer Science' }), facts).filter((i) => /field/.test(i)), []);
   assert.ok(validateReview(page({ field: 'Engineering - Mechanical Engineering' }), facts).some((i) => /field/.test(i)));
 });
+
+test('a filled references box blocks Submit', () => {
+  const bad = page() + '\nList three business references (previous supervisors); include name, phone and email.\n7865992700';
+  assert.ok(validateReview(bad, facts).some((i) => /references field filled/.test(i)));
+});
