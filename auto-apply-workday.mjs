@@ -995,16 +995,22 @@ async function fillText(page, box, kind, answer) {
 
 /** Tick a checkbox or radio. Some Workday boxes ignore .check(); click the box (then its label) instead. */
 async function tick(locator) {
+  const checked = () => locator.isChecked().catch(() => false);
+  if (await checked()) return;
   try {
     await locator.check({ force: true });
-    return;
+    if (await checked()) return;
   } catch {
     // fall through to clicking
   }
-  await locator.click({ force: true }).catch(() => {});
-  if (await locator.isChecked().catch(() => false)) return;
+  if (!(await checked())) await locator.click({ force: true }).catch(() => {});
+  if (await checked()) return;
   const id = await locator.getAttribute('id').catch(() => null);
   if (id) await locator.page().locator(`label[for="${id}"]`).first().click({ force: true }).catch(() => {});
+  if (await checked()) return;
+  // Some React boxes ignore synthetic clicks but take the keyboard.
+  await locator.focus().catch(() => {});
+  await locator.press('Space').catch(() => {});
 }
 
 /** MM/DD/YYYY of the next weekday in local time (TZ=America/Chicago in the launcher). */
@@ -1170,7 +1176,8 @@ async function openEducationEntry(page, ctx) {
 async function fillWorkExperience(page, ctx) {
   const jobs = ctx.experience ?? [];
   if (!jobs.length) return 0;
-  const titleInputs = page.locator(WX.title);
+  // Visible boxes only: some tenants keep hidden jobTitle inputs (templates, collapsed entries) that never take input.
+  const titleInputs = page.locator(WX.title).filter({ visible: true });
   const addButton = page.getByRole('button', { name: /^\s*add( another)?\s*$/i });
   // The Add button that belongs to the Work Experience section.
   // Workday labels each My Experience section group; once entries exist, the nearest
@@ -1187,7 +1194,7 @@ async function fillWorkExperience(page, ctx) {
       const add = (await sectionAdd.isVisible().catch(() => false)) ? sectionAdd : addButton.last();
       if (!(await add.isVisible().catch(() => false))) break;
       await add.click({ force: true });
-      await page.waitForFunction((n) => document.querySelectorAll('[data-automation-id="formField-jobTitle"] input, input[id$="--jobTitle"]').length > n, i, { timeout: 10_000 }).catch(() => {});
+      await page.waitForFunction((n) => [...document.querySelectorAll('[data-automation-id="formField-jobTitle"] input, input[id$="--jobTitle"]')].filter((e) => e.offsetParent !== null).length > n, i, { timeout: 10_000 }).catch(() => {});
       await pause(500, 800);
       if ((await titleInputs.count()) <= i) break;
     }
