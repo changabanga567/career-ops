@@ -37,6 +37,7 @@ import { getCareerOpsRoot, getProfilePath, resolveTrackerPath } from './path-res
 import { linkedReportNumbers, parseScore, parseTrackerRow, resolveColumns } from './tracker-parse.mjs';
 import { freshLaunchOptions } from './apply-scope.mjs';
 import { atsVendorOf } from './ats-vendor.mjs';
+import { validateReview, reviewFacts } from './lib/review-guard.mjs';
 import {
   createResolver,
   isAgreementLabel,
@@ -1444,6 +1445,12 @@ async function runJob(browser, job, ctx) {
           if (keepOpen()) await ctx.ask('  Review page reached. Check it in the browser, submit there if you want, then press Enter… ');
           return { status: 'ready_for_review', screenshot: shot };
         }
+        // Last line of defence: what the employer will receive must match cv.md and the profile.
+        const guardIssues = ctx.facts ? validateReview(await pageText(page), ctx.facts) : ['review guard has no facts (cv.md missing)'];
+        if (guardIssues.length) {
+          ctx.say(`  ✋ review guard blocked Submit: ${guardIssues.join(' · ')}`);
+          return { status: 'review_blocked', errors: guardIssues, screenshot: await screenshot(page, job.url, 'review-blocked') };
+        }
         await submit.click({ force: true });
         await settle(page);
         for (let t = 0; t < 20; t++) {
@@ -1553,6 +1560,12 @@ async function main() {
     learned: readLearned(),
     experience: existsSync(join(DATA_ROOT, 'cv.md')) ? parseCvExperience(readFileSync(join(DATA_ROOT, 'cv.md'), 'utf-8')) : [],
     education: existsSync(join(DATA_ROOT, 'cv.md')) ? parseCvEducation(readFileSync(join(DATA_ROOT, 'cv.md'), 'utf-8')) : null,
+    facts: existsSync(join(DATA_ROOT, 'cv.md')) ? reviewFacts({
+      cvText: readFileSync(join(DATA_ROOT, 'cv.md'), 'utf-8'),
+      experience: parseCvExperience(readFileSync(join(DATA_ROOT, 'cv.md'), 'utf-8')),
+      personal: config.personal ?? {},
+      salary: String([].concat(config.work?.desired_salary ?? config.desired_salary ?? '1')[0]),
+    }) : null,
     say: (msg) => console.log(msg),
     ask: (q) => (rl ? rl.question(q) : Promise.resolve('')),
   };

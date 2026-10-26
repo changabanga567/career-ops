@@ -29,6 +29,8 @@ import { resumeFileName } from './lib/daily-run.mjs';
 import { getProfilePath, resolveTrackerPath } from './path-resolver.mjs';
 import { freshLaunchOptions } from './apply-scope.mjs';
 import { atsVendorOf } from './ats-vendor.mjs';
+import { validateReview, reviewFacts } from './lib/review-guard.mjs';
+import { parseCvExperience } from './lib/workday-answers.mjs';
 import { createResolver, isAgreementLabel, isOptInLabel, ALTERNATIVES, normalizeLabel, parseCvEducation, pickOption } from './lib/workday-answers.mjs';
 import {
   alreadySubmitted, blacklistHit, findReportPdf, loadEnv, logResult, markApplied, markClosed, parseBatchFile, parseBlacklist,
@@ -602,6 +604,32 @@ export async function runAtsJob(browser, job, ctx) {
       return { status: 'ready_for_review', screenshot: shot };
     }
 
+    // These forms have no Review page: read back every filled answer as "label / value" and check it
+    // against cv.md and the profile before anything is sent.
+    const snapshot = await page.evaluate(() => {
+      const out = [];
+      const labelOf = (el) => {
+        const id = el.id && document.querySelector(`label[for="${CSS.escape(el.id)}"]`);
+        const box = el.closest('fieldset, .field, .application-question, [class*="question"], [class*="field"], li, div');
+        return (id?.innerText || el.getAttribute('aria-label') || box?.querySelector('label, legend')?.innerText || el.name || '').replace(/\s+/g, ' ').trim();
+      };
+      for (const el of document.querySelectorAll('input:not([type=hidden]):not([type=file]):not([type=submit]), select, textarea')) {
+        if (!el.getClientRects().length) continue;
+        let v = '';
+        if (el.type === 'checkbox' || el.type === 'radio') { if (!el.checked) continue; v = (document.querySelector(`label[for="${CSS.escape(el.id || '')}"]`)?.innerText || el.value || 'Yes'); }
+        else if (el.tagName === 'SELECT') v = el.selectedOptions?.[0]?.innerText || '';
+        else v = el.value || '';
+        if (!String(v).trim()) continue;
+        out.push(labelOf(el), String(v).replace(/\s+/g, ' ').trim());
+      }
+      return out.join('\n');
+    }).catch(() => '');
+    const guardIssues = ctx.facts ? validateReview(snapshot, ctx.facts) : ['review guard has no facts (cv.md missing)'];
+    if (guardIssues.length) {
+      ctx.say(`  ✋ review guard blocked Submit: ${guardIssues.join(' · ')}`);
+      return { status: 'review_blocked', errors: guardIssues, screenshot: await screenshot(page, job.url, 'review-blocked') };
+    }
+
     const submit = await findSubmit(page);
     if (!submit) return { status: 'error', errors: ['no Submit button found'], screenshot: await screenshot(page, job.url, 'error') };
     await submit.scrollIntoViewIfNeeded().catch(() => {});
@@ -705,6 +733,12 @@ async function main() {
     email: config.personal?.email || profile.candidate?.email || '',
     learned: readLearned(),
     education: existsSync(cvPath) ? parseCvEducation(readFileSync(cvPath, 'utf-8')) : null,
+    facts: existsSync(cvPath) ? reviewFacts({
+      cvText: readFileSync(cvPath, 'utf-8'),
+      experience: parseCvExperience(readFileSync(cvPath, 'utf-8')),
+      personal: config.personal ?? {},
+      salary: String([].concat(config.work?.desired_salary ?? '1')[0]),
+    }) : null,
     keepOpen: !opts.headless && !opts.submit,
     say: (msg) => console.log(msg),
     ask: (question) => (rl ? rl.question(question) : Promise.resolve('')),
