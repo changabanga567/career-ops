@@ -48,6 +48,7 @@ import {
   normalizeLabel,
   pickOption,
   workdayPasswordProblems,
+  reportPayTarget,
 } from './lib/workday-answers.mjs';
 
 const CODE_ROOT = dirname(fileURLToPath(import.meta.url));
@@ -1591,8 +1592,11 @@ async function main() {
       summary.push({ url: job.url, status: 'skipped_duplicate' });
       return;
     }
-    const jctx = { ...ctx, say, employer: job.company || tag };
-    jctx.refreshResolver = () => { jctx.resolve = createResolver({ config, profile, learned: jctx.learned, employer: jctx.employer, education: jctx.education }); };
+    // Range-only salary questions take the range holding the JD's posted pay (user rule, 2026-10-26).
+    const salaryTarget = reportPayTarget(DATA_ROOT, job.report);
+    const jctx = { ...ctx, say, employer: job.company || tag, salaryTarget, facts: ctx.facts && { ...ctx.facts, salaryTarget } };
+    if (salaryTarget) say(`  JD pay midpoint ${salaryTarget} (used only for range-only salary questions)`);
+    jctx.refreshResolver = () => { jctx.resolve = createResolver({ config, profile, learned: jctx.learned, employer: jctx.employer, education: jctx.education, salaryTarget }); };
     jctx.refreshResolver();
     let result = await runJob(browser, job, jctx);
     // A draft reopened after a Workday error page can keep Save disabled for the rest of that

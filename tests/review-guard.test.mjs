@@ -84,3 +84,11 @@ test('a different bachelor degree or field blocks Submit', () => {
   assert.ok(validateReview(page({ field: 'COMPUTER SCIENCE & MATHEMATICS' }), facts).some((i) => /field of study/.test(i)));
   assert.deepEqual(validateReview(page({ field: 'Computer and Information Science' }), facts), []);
 });
+
+test('a salary range passes only when it holds the JD pay midpoint', () => {
+  const withJd = { ...facts, salaryTarget: 118500 };
+  assert.deepEqual(validateReview(page({ salary: '$110,001+' }), withJd), []);
+  assert.deepEqual(validateReview(page({ salary: '100,000 - 119,999' }), withJd), []);
+  assert.ok(validateReview(page({ salary: '$90,001-$100,000' }), withJd).some((i) => /salary answer/.test(i)));
+  assert.ok(validateReview(page({ salary: '$110,001+' }), facts).some((i) => /salary answer/.test(i)));
+});

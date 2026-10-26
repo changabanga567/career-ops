@@ -31,7 +31,7 @@ import { freshLaunchOptions } from './apply-scope.mjs';
 import { atsVendorOf } from './ats-vendor.mjs';
 import { validateReview, reviewFacts } from './lib/review-guard.mjs';
 import { parseCvExperience } from './lib/workday-answers.mjs';
-import { createResolver, isAgreementLabel, isOptInLabel, ALTERNATIVES, normalizeLabel, parseCvEducation, pickOption } from './lib/workday-answers.mjs';
+import { createResolver, isAgreementLabel, isOptInLabel, ALTERNATIVES, normalizeLabel, parseCvEducation, pickOption, reportPayTarget } from './lib/workday-answers.mjs';
 import {
   alreadySubmitted, blacklistHit, findReportPdf, loadEnv, logResult, markApplied, markClosed, parseBatchFile, parseBlacklist,
   pause, readLearned, readYamlFile, reportUrl, resolveJobPdf, saveLearned, screenshot, selectTrackerJobs, tick,
@@ -773,7 +773,10 @@ async function main() {
       // Resume only: the candidate does not send cover letters (2026-10-25).
       coverPath: null,
     };
-    jctx.refreshResolver = () => { jctx.resolve = createResolver({ config: runConfig, profile, learned: jctx.learned, employer: jctx.employer, education: jctx.education }); };
+    // Range-only salary questions take the range holding the JD's posted pay (user rule, 2026-10-26).
+    jctx.salaryTarget = reportPayTarget(DATA_ROOT, job.report);
+    if (jctx.facts) jctx.facts = { ...jctx.facts, salaryTarget: jctx.salaryTarget };
+    jctx.refreshResolver = () => { jctx.resolve = createResolver({ config: runConfig, profile, learned: jctx.learned, employer: jctx.employer, education: jctx.education, salaryTarget: jctx.salaryTarget }); };
     jctx.refreshResolver();
     const result = await runAtsJob(browser, job, jctx);
     const via = { greenhouse: 'Greenhouse', lever: 'Lever', ashby: 'Ashby' }[jctx.vendor];
