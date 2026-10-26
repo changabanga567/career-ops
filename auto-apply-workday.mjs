@@ -1016,6 +1016,8 @@ export function nextBusinessDay(from = new Date()) {
 
 /** An answer may list fallbacks ("Career Site || Company Website || LinkedIn"); use the first one the form accepts. */
 async function applyAnswer(page, field, answer) {
+  // "{next_business_day}" in an answer becomes tomorrow's (weekday) date at run time.
+  answer = String(answer).replace(/\{next_business_day\}/g, () => nextBusinessDay());
   // "each: A || B" is a multi-select answer for checkbox groups, applied whole.
   if (/^each:/i.test(String(answer)) && field.kind === 'checkboxes') return applyOneAnswer(page, field, String(answer));
   const choices = String(answer).replace(/^each:\s*/i, '').split(ALTERNATIVES).map((c) => c.trim()).filter(Boolean);
