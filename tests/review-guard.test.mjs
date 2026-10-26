@@ -103,3 +103,10 @@ test('wrong yes/no meanings block Submit', () => {
   assert.deepEqual(validateReview(add('Will you now or in the future require sponsorship for employment visa status?', 'No'), facts), []);
   assert.deepEqual(validateReview(add('Are you legally authorized to work in the United States?', 'Yes'), facts), []);
 });
+
+test('employer ethics contact in page text passes; a wrong email field still blocks', () => {
+  const ok = page() + '\nQuestions? Contact ethicsoffice@acme.com';
+  assert.deepEqual(validateReview(ok, facts).filter((i) => /email/.test(i)), []);
+  const bad = page().replace('Email Address\nsam@example.com', 'Email Address\nother@example.com');
+  assert.ok(validateReview(bad, facts).some((i) => /email field shows "other@example.com"/.test(i)));
+});

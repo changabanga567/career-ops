@@ -1191,7 +1191,23 @@ async function fillWorkExperience(page, ctx) {
       await pause(500, 800);
       if ((await titleInputs.count()) <= i) break;
     }
-    const titleInput = titleInputs.nth(i);
+    let titleInput = titleInputs.nth(i);
+    // A freshly added entry can be counted before it is rendered and fillable: wait for it, and
+    // re-click Add once if it never shows (the first click sometimes only scrolls the section).
+    if (!(await titleInput.isVisible().catch(() => false))) {
+      await titleInput.scrollIntoViewIfNeeded({ timeout: 5_000 }).catch(() => {});
+      if (!(await titleInput.waitFor({ state: 'visible', timeout: 8_000 }).then(() => true).catch(() => false))) {
+        const add = (await sectionAdd.isVisible().catch(() => false)) ? sectionAdd : addButton.last();
+        await add.click({ force: true }).catch(() => {});
+        await pause(800, 1200);
+        const visible = titleInputs.filter({ visible: true });
+        titleInput = (await visible.count()) > i ? visible.nth(i) : titleInput;
+        if (!(await titleInput.waitFor({ state: 'visible', timeout: 8_000 }).then(() => true).catch(() => false))) {
+          ctx.say(`  ! work experience ${i + 1}: job-title box never became fillable; leaving remaining entries`);
+          break;
+        }
+      }
+    }
     // The entry is the nearest ancestor that holds exactly this one job-title field.
     const entry = titleInput.locator('xpath=ancestor::*[count(.//input[contains(@id,"--jobTitle")] | .//*[@data-automation-id="formField-jobTitle"]//input) = 1][last()]');
     const job = jobs[i];
@@ -1208,7 +1224,7 @@ async function fillWorkExperience(page, ctx) {
       if (added.some(Boolean)) ctx.say(`  work experience ${i + 1}: completed location/description`);
       continue;
     }
-    await titleInput.fill(job.title);
+    await titleInput.fill(job.title, { timeout: 10_000 });
     await entry.locator(WX.company).first().fill(job.company).catch(() => {});
     await fillIfEmpty(WX.location, jobLocation(ctx.config, job));
     await fillIfEmpty(WX.description, description);
