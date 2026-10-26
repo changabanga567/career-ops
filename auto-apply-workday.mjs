@@ -952,7 +952,7 @@ async function fillDate(box, answer) {
     const year = box.locator(`input${aid('dateSectionYear-input')}`).first();
     if (!(await year.count())) return { ok: false };
     // A "YYYY" overlay sometimes intercepts the pointer; fall back to a forced click, then focus.
-    await year.click({ timeout: 4000 }).catch(() => year.click({ force: true, timeout: 4000 })).catch(() => year.focus());
+    await year.click({ timeout: 4000 }).catch(() => year.click({ force: true, timeout: 4000 })).catch(() => year.focus({ timeout: 4000 })).catch(() => {});
     await year.page().keyboard.press('Control+A').catch(() => {});
     await year.page().keyboard.type(d.yyyy, { delay: 90 });
     await year.page().keyboard.press('Tab').catch(() => {});
@@ -1239,7 +1239,11 @@ async function fillPage(page, ctx) {
         const d = mine?.answer ? String(mine.answer).split(ALTERNATIVES).map((c) => parseDate(c.trim())).find(Boolean) ?? null : null;
         const want = d ? [d.mm, d.dd, d.yyyy] : null;
         const have = field.value.split('/');
-        if (!want || (have.length === 3 && have[0].padStart(2, '0') === want[0] && have[1].padStart(2, '0') === want[1] && have[2] === want[2])) continue;
+        // Year-only and month/year widgets show "2020" or "02/2020" for a full answer like 02/01/2020.
+        const same = have.length === 3 ? have[0].padStart(2, '0') === want?.[0] && have[1].padStart(2, '0') === want?.[1] && have[2] === want?.[2]
+          : have.length === 2 ? have[0].padStart(2, '0') === want?.[0] && have[1] === want?.[2]
+            : have[0] === want?.[2];
+        if (!want || same) continue;
         ctx.say(`  ! "${field.label.slice(0, 50)}" was ${field.value}, correcting`);
       } else if (field.value && field.kind !== 'checkbox') {
         // Keep a value Workday or an earlier run filled, unless it contradicts our answer (a draft can hold a wrong pick).
