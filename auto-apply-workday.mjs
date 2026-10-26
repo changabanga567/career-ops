@@ -819,6 +819,13 @@ async function fillDropdown(page, box, answer) {
   };
   let { loc, texts } = await read();
   let i = pick(texts);
+  // Long lists (countries) jump to an option when its first letters are typed.
+  if (i === -1 && texts.length >= 30 && choices[0] && !/^bracket:/i.test(choices[0])) {
+    await page.keyboard.type(choices[0].slice(0, 8), { delay: 60 }).catch(() => {});
+    await pause(400, 600);
+    ({ loc, texts } = await read());
+    i = pick(texts);
+  }
   const seen = new Set(texts);
   // Long lists may render only the options near the current value: scroll through the rest.
   const list = page.locator(`${LIST}:visible`).last();
