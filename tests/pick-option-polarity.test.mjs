@@ -41,3 +41,12 @@ test('"=" answers match exactly, never a longer different major', () => {
   assert.equal(pickOption('=Computer Science', ['Advanced Computer Science', 'Computer Science']), 1);
   assert.equal(pickOption('=Computer Science', ['Advanced Computer Science']), -1);
 });
+
+test('pay floor: hourly and annual posted ranges compare against the right floor', async () => {
+  const { jdPayRange, payFloor } = await import('../lib/workday-answers.mjs');
+  const profile = { compensation: { minimum_onsite: 100000, minimum_remote: 80000 } };
+  assert.equal(jdPayRange('The starting hourly wage for this role is $27.04 - $31 per hour.').max, 64480);
+  assert.equal(payFloor(profile, false), 100000);
+  assert.equal(payFloor(profile, true), 80000);
+  assert.equal(payFloor({}, false), null);
+});

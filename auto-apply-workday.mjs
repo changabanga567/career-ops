@@ -48,7 +48,8 @@ import {
   normalizeLabel,
   pickOption,
   workdayPasswordProblems,
-  reportPayTarget,
+  reportPayRange,
+  payFloor,
 } from './lib/workday-answers.mjs';
 
 const CODE_ROOT = dirname(fileURLToPath(import.meta.url));
@@ -1707,8 +1708,16 @@ async function main() {
       summary.push({ url: job.url, status: 'skipped_duplicate' });
       return;
     }
+    // Never apply where the posted pay tops out under the candidate's floor (profile.yml compensation minimums).
+    const posted = reportPayRange(DATA_ROOT, job.report);
+    const floor = posted && payFloor(profile, posted.remote);
+    if (floor && posted.max < floor && !opts.force) {
+      say(`  posted pay tops out at $${posted.max.toLocaleString('en-US')}, under the $${floor.toLocaleString('en-US')} ${posted.remote ? 'remote' : 'on-site/hybrid'} floor — skipping; --force to apply anyway`);
+      summary.push({ url: job.url, status: 'below_pay_floor' });
+      return;
+    }
     // Range-only salary questions take the range holding the JD's posted pay (user rule, 2026-10-26).
-    const salaryTarget = reportPayTarget(DATA_ROOT, job.report);
+    const salaryTarget = posted?.target ?? null;
     const jctx = { ...ctx, say, employer: job.company || tag, salaryTarget, facts: ctx.facts && { ...ctx.facts, salaryTarget } };
     if (salaryTarget) say(`  JD pay midpoint ${salaryTarget} (used only for range-only salary questions)`);
     // data/auto-apply/job-answers/{report}-*.yml: answers for this job only, checked before config/auto-apply.yml.
@@ -1747,7 +1756,7 @@ async function main() {
   for (const s of summary) console.log(`  ${s.status.padEnd(18)} ${s.url}`);
   const needInput = summary.filter((s) => s.status === 'needs_input');
   if (needInput.length) console.log('\nAdd answers for the questions above to config/auto-apply.yml → questions:, then rerun.');
-  if (summary.some((s) => !['submitted', 'ready_for_review', 'already_applied', 'skipped_duplicate', 'closed', 'unavailable'].includes(s.status))) process.exitCode = 2;
+  if (summary.some((s) => !['submitted', 'ready_for_review', 'already_applied', 'skipped_duplicate', 'closed', 'unavailable', 'below_pay_floor'].includes(s.status))) process.exitCode = 2;
 }
 
 if (isMainModule(import.meta.url)) {
