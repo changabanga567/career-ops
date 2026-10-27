@@ -1527,6 +1527,10 @@ async function runJob(browser, job, ctx) {
       await openEducationEntry(page, ctx);
       const open = await fillPage(page, ctx);
       if (open.length) {
+        // A post-submit "create an account" popup (JLL) carries Password fields; that is a confirmation, not a question.
+        if (CONFIRM_RE.test(await pageText(page)) || (await visible(page.locator(aid('congratulationsPopup'))))) {
+          return { status: 'submitted', screenshot: await screenshot(page, job.url, 'submitted') };
+        }
         return { status: 'needs_input', step: name, questions: open, screenshot: await screenshot(page, job.url, 'needs-input') };
       }
 
