@@ -132,3 +132,10 @@ test('CIP family name for computer science passes the field check', () => {
   assert.deepEqual(validateReview(page({ field: 'Computer and Information Sciences and Support Services' }), facts).filter((i) => /field/.test(i)), []);
   assert.ok(validateReview(page({ field: 'Information Systems and Support Services' }), facts).some((i) => /field/.test(i)));
 });
+
+test('the visa note under a sponsorship question answered No passes; a real eligibility No still blocks', () => {
+  const note = page() + "\nNote: If you are currently on a visa or any other type of temporary work authorization that will require employer assistance in order for you to remain authorized to work in the United States, you should select 'Yes' to the above question.\nNo";
+  assert.deepEqual(validateReview(note, facts).filter((i) => /work authorization/.test(i)), []);
+  const bad = page() + '\nI am currently eligible to work, and will in the future be eligible to work, in the United States.\nNo';
+  assert.ok(validateReview(bad, facts).some((i) => /work authorization/.test(i)));
+});
