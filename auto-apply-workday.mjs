@@ -893,12 +893,19 @@ async function promptHasSelection(box) {
 /** Workday "prompt" widgets (How did you hear, Country phone code…): search, pick, descend at most 3 levels. */
 /** A click that times out (the popup re-rendered, or a chip replaced the input) is a miss, not a crash of the whole job. */
 async function fillPrompt(page, box, answer) {
-  try {
-    return await fillPromptOnce(page, box, answer);
-  } catch (err) {
-    await page.keyboard.press('Escape').catch(() => {});
-    return { ok: false, options: [], error: err.message.split('\n')[0] };
+  // "A || B" alternatives are searched one at a time: typing the whole string finds nothing.
+  const choices = String(answer).split(ALTERNATIVES).map((c) => c.trim()).filter(Boolean);
+  let last = { ok: false, options: [] };
+  for (const choice of choices.length ? choices : [answer]) {
+    try {
+      last = await fillPromptOnce(page, box, choice);
+    } catch (err) {
+      await page.keyboard.press('Escape').catch(() => {});
+      last = { ok: false, options: [], error: err.message.split('\n')[0] };
+    }
+    if (last.ok) return last;
   }
+  return last;
 }
 
 async function fillPromptOnce(page, box, answer) {
