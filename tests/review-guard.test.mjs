@@ -139,3 +139,10 @@ test('the visa note under a sponsorship question answered No passes; a real elig
   const bad = page() + '\nI am currently eligible to work, and will in the future be eligible to work, in the United States.\nNo';
   assert.ok(validateReview(bad, facts).some((i) => /work authorization/.test(i)));
 });
+
+test('a required privacy-notice terms box answered Yes is not an opt-in', () => {
+  const terms = page() + '\nTerms and Conditions\nI’ve read and understand the Privacy Notice and agree to receive communications from Global Payments\nYes';
+  assert.deepEqual(validateReview(terms, facts).filter((i) => /opt-in/.test(i)), []);
+  const optIn = page() + '\nWould you like to receive job alerts and text messages about future opportunities?\nYes';
+  assert.ok(validateReview(optIn, facts).some((i) => /opt-in/.test(i)));
+});
