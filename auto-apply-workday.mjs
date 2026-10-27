@@ -903,8 +903,9 @@ async function fillPrompt(page, box, answer) {
 
 async function fillPromptOnce(page, box, answer) {
   const input = box.locator('input').first();
+  const typed = String(answer).replace(/^=\s*/, '');
   await input.click({ timeout: 8000 });
-  await input.fill(answer);
+  await input.fill(typed);
   await page.keyboard.press('Enter');
   await pause(700, 1000);
   let { loc, texts } = await visibleOptions(page);
@@ -928,7 +929,7 @@ async function fillPromptOnce(page, box, answer) {
     await pause(700, 1000);
     if (all !== -1) {
       // Inside All: search the answer again within the category.
-      await input.fill(answer).catch(() => {});
+      await input.fill(typed).catch(() => {});
       await page.keyboard.press('Enter').catch(() => {});
       await pause(700, 1000);
       ({ loc, texts } = await visibleOptions(page));
@@ -997,9 +998,10 @@ async function fillDate(box, answer) {
 async function fillText(page, box, kind, answer) {
   // Some tenants render a one-line question as a textarea next to unrelated inputs: prefer the textarea.
   const loc = box.locator(kind === 'textarea' || (await box.locator('textarea').count()) ? 'textarea' : 'input:not([type="hidden"])').first();
-  await loc.fill(answer);
+  const text = String(answer).replace(/^=\s*/, '');
+  await loc.fill(text);
   await page.keyboard.press('Tab').catch(() => {});
-  return { ok: true, chose: answer };
+  return { ok: true, chose: text };
 }
 
 /** Tick a checkbox or radio. Some Workday boxes ignore .check(); click the box (then its label) instead. */

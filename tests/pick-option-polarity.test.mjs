@@ -36,3 +36,8 @@ test('personal fields never answer questions about other people or long question
   assert.equal(r('Do you have experience contacting customers via phone when email is not available?'), null);
   assert.equal(r('If you marked Yes to having previously worked here, please list your email'), null);
 });
+
+test('"=" answers match exactly, never a longer different major', () => {
+  assert.equal(pickOption('=Computer Science', ['Advanced Computer Science', 'Computer Science']), 1);
+  assert.equal(pickOption('=Computer Science', ['Advanced Computer Science']), -1);
+});
