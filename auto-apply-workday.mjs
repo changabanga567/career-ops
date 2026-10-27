@@ -318,6 +318,21 @@ function reportUrl(num) {
   return m ? m[1] : null;
 }
 
+/** {match, answer} rules from data/auto-apply/job-answers/{report}-*.yml (one job's own answers). */
+function jobAnswerRules(num) {
+  const dir = join(DATA_ROOT, 'data', 'auto-apply', 'job-answers');
+  if (!num || !existsSync(dir)) return [];
+  const padded = String(num).padStart(3, '0');
+  const rules = [];
+  for (const name of readdirSync(dir).filter((n) => n.startsWith(`${padded}-`) && /\.ya?ml$/.test(n)).sort()) {
+    const doc = loadYaml(readFileSync(join(dir, name), 'utf-8'));
+    const list = Array.isArray(doc) ? doc : doc?.questions;
+    if (!Array.isArray(list)) throw new Error(`job-answers/${name}: expected a list of {match, answer}`);
+    rules.push(...list);
+  }
+  return rules;
+}
+
 /** Role per report number from the tracker, for jobs given by --url/--batch (upload file name). */
 function trackerRoles() {
   const trackerPath = resolveTrackerPath(DATA_ROOT);
@@ -1696,7 +1711,11 @@ async function main() {
     const salaryTarget = reportPayTarget(DATA_ROOT, job.report);
     const jctx = { ...ctx, say, employer: job.company || tag, salaryTarget, facts: ctx.facts && { ...ctx.facts, salaryTarget } };
     if (salaryTarget) say(`  JD pay midpoint ${salaryTarget} (used only for range-only salary questions)`);
-    jctx.refreshResolver = () => { jctx.resolve = createResolver({ config, profile, learned: jctx.learned, employer: jctx.employer, education: jctx.education, salaryTarget }); };
+    // data/auto-apply/job-answers/{report}-*.yml: answers for this job only, checked before config/auto-apply.yml.
+    const jobAnswers = jobAnswerRules(job.report);
+    if (jobAnswers.length) say(`  ${jobAnswers.length} job-specific answer(s) loaded`);
+    const jconfig = jobAnswers.length ? { ...config, questions: [...jobAnswers, ...(config.questions ?? [])] } : config;
+    jctx.refreshResolver = () => { jctx.resolve = createResolver({ config: jconfig, profile, learned: jctx.learned, employer: jctx.employer, education: jctx.education, salaryTarget }); };
     jctx.refreshResolver();
     let result = await runJob(browser, job, jctx);
     // A draft reopened after a Workday error page can keep Save disabled for the rest of that
