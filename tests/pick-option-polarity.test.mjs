@@ -50,3 +50,9 @@ test('pay floor: hourly and annual posted ranges compare against the right floor
   assert.equal(payFloor(profile, true), 80000);
   assert.equal(payFloor({}, false), null);
 });
+
+test('pay floor: an unlabeled cents range is read as hourly', async () => {
+  const { jdPayRange } = await import('../lib/workday-answers.mjs');
+  assert.equal(jdPayRange('Compensation:  Salary Range: $24.00 - $38.50').max, 80080);
+  assert.equal(jdPayRange('Salary Range: $95,000.00 - $120,000.00').max, 120000);
+});
