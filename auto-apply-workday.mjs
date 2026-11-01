@@ -50,6 +50,7 @@ import {
   workdayPasswordProblems,
   reportPayRange,
   payFloor,
+  reportIsRemote,
 } from './lib/workday-answers.mjs';
 
 const CODE_ROOT = dirname(fileURLToPath(import.meta.url));
@@ -1717,9 +1718,11 @@ async function main() {
       return;
     }
     // Range-only salary questions take the range holding the JD's posted pay (user rule, 2026-10-26).
-    const salaryTarget = posted?.target ?? null;
+    // No posted pay: aim range-only questions just above the candidate's stated floor (user rule, 2026-11-01).
+    const unpostedFloor = posted ? null : payFloor(profile, reportIsRemote(DATA_ROOT, job.report));
+    const salaryTarget = posted?.target ?? (unpostedFloor ? Math.round(unpostedFloor * 1.06) : null);
     const jctx = { ...ctx, say, employer: job.company || tag, salaryTarget, facts: ctx.facts && { ...ctx.facts, salaryTarget } };
-    if (salaryTarget) say(`  JD pay midpoint ${salaryTarget} (used only for range-only salary questions)`);
+    if (salaryTarget) say(`  ${posted ? 'JD pay midpoint' : 'no posted pay; floor-based target'} ${salaryTarget} (used only for range-only salary questions)`);
     // data/auto-apply/job-answers/{report}-*.yml: answers for this job only, checked before config/auto-apply.yml.
     const jobAnswers = jobAnswerRules(job.report);
     if (jobAnswers.length) say(`  ${jobAnswers.length} job-specific answer(s) loaded`);
