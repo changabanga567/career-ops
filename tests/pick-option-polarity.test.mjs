@@ -56,3 +56,9 @@ test('pay floor: an unlabeled cents range is read as hourly', async () => {
   assert.equal(jdPayRange('Compensation:  Salary Range: $24.00 - $38.50').max, 80080);
   assert.equal(jdPayRange('Salary Range: $95,000.00 - $120,000.00').max, 120000);
 });
+
+test('an Asian / Pacific Islander answer never lands on Native Hawaiian or Other Pacific Islander', () => {
+  const options = ['Asian (United States of America)', 'Native Hawaiian or Other Pacific Islander (United States of America)', 'White (United States of America)'];
+  assert.equal(pickOption('Asian / Pacific Islander (United States of America)', options), -1);
+  assert.equal(options[pickOption('Asian (United States of America)', options)], 'Asian (United States of America)');
+});
