@@ -62,3 +62,9 @@ test('an Asian / Pacific Islander answer never lands on Native Hawaiian or Other
   assert.equal(pickOption('Asian / Pacific Islander (United States of America)', options), -1);
   assert.equal(options[pickOption('Asian (United States of America)', options)], 'Asian (United States of America)');
 });
+
+test('a not-a-veteran answer never lands on "identify as a veteran, just not a protected veteran"', () => {
+  const options = ['I IDENTIFY AS ONE OR MORE OF THE CLASSIFICATIONS OF PROTECTED VETERAN', 'IDENTIFY AS A VETERAN, JUST NOT A PROTECTED VETERAN', "I DON'T WISH TO ANSWER"];
+  for (const w of ['I am not a protected veteran', 'Not a Protected Veteran', 'No']) assert.equal(pickOption(w, options), -1);
+  assert.equal(options[pickOption("I don't wish to answer", options)], "I DON'T WISH TO ANSWER");
+});
