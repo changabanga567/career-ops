@@ -33,3 +33,8 @@ test('the lock wins over a config rule that would say Yes', () => {
   assert.equal(r.answer, 'No');
   assert.equal(r.source, 'lock');
 });
+
+test('a note saying "authorized without sponsorship" under the question does not flip the answer', () => {
+  const q = 'Will you now or in the future require employer-sponsored work authorization or visa sponsorship to legally work in the United States?\n\nApplicants must be legally authorized to work in the United States without current or future employer sponsorship. At this time, WelbeHealth does not provide any employment-based visa sponsorship, including H-1B, TN, E-3, O-1, F-1 OPT/STEM OPT.';
+  assert.equal(sponsorshipLock(q), 'No');
+});
