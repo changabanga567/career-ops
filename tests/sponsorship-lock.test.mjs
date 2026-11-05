@@ -44,3 +44,7 @@ test('the same question with its "?" already stripped is still No', () => {
   assert.equal(sponsorshipLock(q), 'No');
   assert.equal(sponsorshipLock('are you legally authorized to work in the united states without the need for employer sponsorship'), 'Yes');
 });
+
+test('"require us to obtain or extend employment authorization" is a sponsorship question', () => {
+  assert.equal(sponsorshipLock('Will you now or in the future require EisnerAmper to obtain, maintain, or extend employment authorization?'), 'No');
+});
