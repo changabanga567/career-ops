@@ -30,6 +30,7 @@ import { getProfilePath, resolveTrackerPath } from './path-resolver.mjs';
 import { freshLaunchOptions } from './apply-scope.mjs';
 import { atsVendorOf } from './ats-vendor.mjs';
 import { validateReview, reviewFacts } from './lib/review-guard.mjs';
+import { keepJobsWithOrderedResumes } from './lib/resume-text-order.mjs';
 import { parseCvExperience } from './lib/workday-answers.mjs';
 import { createResolver, isAgreementLabel, isOptInLabel, ALTERNATIVES, normalizeLabel, parseCvEducation, pickOption, reportPayTarget } from './lib/workday-answers.mjs';
 import {
@@ -727,6 +728,8 @@ async function main() {
     job.pdfPath = resolveJobPdf(job);
     job.role = job.role || reportRole(job.report) || 'Resume';
   }
+  opts.jobs = keepJobsWithOrderedResumes(opts.jobs, existsSync(join(DATA_ROOT, 'cv.md')) ? readFileSync(join(DATA_ROOT, 'cv.md'), 'utf-8') : '');
+  if (opts.jobs.length === 0) { console.log('No jobs left after the resume text-order check.'); return; }
   const prefix = config.daily?.resume_prefix ?? '';
   console.log(`${opts.jobs.length} job(s) · ${opts.submit ? 'WILL SUBMIT' : 'stops before Submit'}`);
   for (const job of opts.jobs) console.log(`  ${job.url}\n    resume ${job.pdfPath.replace(`${DATA_ROOT}/`, '')} as ${resumeFileName(prefix, job.role)}${job.report ? ` · report ${job.report}` : ''}`);

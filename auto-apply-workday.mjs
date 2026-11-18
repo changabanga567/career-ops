@@ -38,6 +38,7 @@ import { linkedReportNumbers, parseScore, parseTrackerRow, resolveColumns } from
 import { freshLaunchOptions } from './apply-scope.mjs';
 import { atsVendorOf } from './ats-vendor.mjs';
 import { validateReview, reviewFacts } from './lib/review-guard.mjs';
+import { keepJobsWithOrderedResumes } from './lib/resume-text-order.mjs';
 import {
   createResolver,
   isAgreementLabel,
@@ -1662,6 +1663,8 @@ async function main() {
     job.pdfPath = resolveJobPdf(job);
     job.role = job.role || roles.get(String(job.report)) || null;
   }
+  opts.jobs = keepJobsWithOrderedResumes(opts.jobs, existsSync(join(DATA_ROOT, 'cv.md')) ? readFileSync(join(DATA_ROOT, 'cv.md'), 'utf-8') : '');
+  if (opts.jobs.length === 0) { console.log('No jobs left after the resume text-order check.'); return; }
 
   const creds = credentials(profile, config);
   const pwProblems = workdayPasswordProblems(creds.password);
