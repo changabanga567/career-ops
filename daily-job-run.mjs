@@ -255,8 +255,14 @@ function evaluate(leads, settings) {
     const out = `${r.stdout ?? ''}`;
     const result = /RESULT:\s*(.+)$/m.exec(out)?.[1]?.trim() ?? (r.error ? `error: ${r.error.message}` : `exit ${r.status}`);
     console.log(`  → ${result} (${Math.round((Date.now() - started) / 1000)}s)`);
-    attempted[lead.url] = { at: new Date().toISOString(), result };
-    writeJson(ATTEMPTED_PATH, attempted);
+    // An agent that crashed before reporting (usage limit, network) never looked
+    // at the lead; recording it would hide the lead from every later run.
+    const finished = /RESULT:/.test(out);
+    if (!finished && r.stderr) console.log(`    ${String(r.stderr).trim().split('\n').slice(-2).join(' | ').slice(0, 300)}`);
+    if (finished) {
+      attempted[lead.url] = { at: new Date().toISOString(), result };
+      writeJson(ATTEMPTED_PATH, attempted);
+    }
     results.push({ url: lead.url, result });
   }
   return results;
