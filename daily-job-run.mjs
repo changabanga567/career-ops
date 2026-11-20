@@ -193,9 +193,18 @@ export const AGENT_BLOCKED_SCRIPTS = ['auto-apply-workday.mjs', 'auto-apply-ats.
 const AUTO_VENDORS = { workday: 'Workday', greenhouse: 'Greenhouse', lever: 'Lever', ashby: 'Ashby' };
 export const AGENT_WRITABLE = ['reports/**', 'output/**', 'data/**', 'jds/**', 'batch/tracker-additions/**', 'interview-prep/**', '//tmp/**'];
 
-export function agentTools(scripts) {
+export function agentTools(scripts, dataRoot = CODE_ROOT) {
   const allowed = ['Read', 'Glob', 'Grep', 'WebFetch'];
   for (const dir of AGENT_WRITABLE) allowed.push(`Edit(${dir})`, `Write(${dir})`);
+  // A data root outside the checkout (CAREER_OPS_ROOT) needs absolute rules:
+  // the relative ones above only match under the agent's cwd.
+  if (resolve(dataRoot) !== resolve(CODE_ROOT)) {
+    for (const dir of AGENT_WRITABLE) {
+      if (dir.startsWith('//')) continue;
+      const abs = `/${resolve(dataRoot, dir.replace(/\/\*\*$/, ''))}/**`;
+      allowed.push(`Edit(${abs})`, `Write(${abs})`);
+    }
+  }
   for (const script of scripts) {
     if (!AGENT_BLOCKED_SCRIPTS.includes(script)) allowed.push(`Bash(node ${script}:*)`);
   }
@@ -209,15 +218,16 @@ function rootScripts() {
 }
 
 /** argv for the configured agent CLI; the prompt goes on stdin. */
-export function agentCommand(cli, settings = {}, scripts = rootScripts()) {
+export function agentCommand(cli, settings = {}, scripts = rootScripts(), dataRoot = DATA_ROOT) {
   if (Array.isArray(settings.agent_command) && settings.agent_command.length) return settings.agent_command.map(String);
   switch (cli) {
     case 'codex': return ['codex', 'exec', '--sandbox', 'workspace-write', '-'];
     case 'claude':
     default: {
-      const { allowed, denied } = agentTools(scripts);
+      const { allowed, denied } = agentTools(scripts, dataRoot);
       const extra = [].concat(settings.extra_allowed_tools ?? []).map(String);
-      return ['claude', '-p', '--allowedTools', ...allowed, ...extra, '--disallowedTools', ...denied];
+      const addDir = resolve(dataRoot) !== resolve(CODE_ROOT) ? ['--add-dir', resolve(dataRoot)] : [];
+      return ['claude', '-p', ...addDir, '--allowedTools', ...allowed, ...extra, '--disallowedTools', ...denied];
     }
   }
 }
