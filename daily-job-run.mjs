@@ -52,6 +52,7 @@ const DEFAULTS = {
   apply_limit: 25,
   agent_timeout_minutes: 20,
   skip_locations: [],
+  remote_only: false,
 };
 
 const USAGE = `Usage: node daily-job-run.mjs [options]
@@ -386,7 +387,7 @@ async function main() {
     const attempted = new Set(Object.keys(readJson(ATTEMPTED_PATH, {})));
     const nonUs = [...DEFAULT_NON_US, ...[].concat(settings.skip_locations ?? []).map((s) => String(s).toLowerCase())];
     const skipTitleWords = [].concat(settings.skip_title_words ?? []).map(String);
-    const { leads, dropped } = rankLeads(existsSync(pipelinePath) ? parsePipeline(readFileSync(pipelinePath, 'utf-8')) : [], { today: localToday(), sinceDays: since, attempted, nonUs, skipTitleWords });
+    const { leads, dropped } = rankLeads(existsSync(pipelinePath) ? parsePipeline(readFileSync(pipelinePath, 'utf-8')) : [], { today: localToday(), sinceDays: since, attempted, nonUs, skipTitleWords, remoteOnly: settings.remote_only === true });
     const batch = leads.slice(0, maxEval);
     const outside = dropped.filter((d) => /outside the U\.S\.|German-market/.test(d.why)).length;
     const offTitle = dropped.filter((d) => d.why.startsWith('title has')).length;
