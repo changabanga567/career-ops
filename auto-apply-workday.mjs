@@ -929,11 +929,28 @@ async function fillPrompt(page, box, answer) {
 async function fillPromptOnce(page, box, answer) {
   const input = box.locator('input').first();
   const typed = String(answer).replace(/^=\s*/, '');
+  // A wrong pick saved in a draft sits as a chip over the search box; remove it first.
+  for (let n = 0; n < 5 && (await box.locator(aid('selectedItem')).count()); n++) {
+    const chip = box.locator(aid('selectedItem')).first();
+    const del = chip.locator(`${aid('DELETE_charm')}, [aria-label*="delete" i], [aria-label*="remove" i]`).first();
+    if (await del.count()) await del.click({ force: true, timeout: 4000 }).catch(() => {});
+    else {
+      await chip.click({ timeout: 4000 }).catch(() => {});
+      await page.keyboard.press('Backspace').catch(() => {});
+      await page.keyboard.press('Delete').catch(() => {});
+    }
+    await pause(400, 700);
+  }
   await input.click({ timeout: 8000 });
   await input.fill(typed);
   await page.keyboard.press('Enter');
   await pause(700, 1000);
   let { loc, texts } = await visibleOptions(page);
+  // Long lists (Field of Study on some tenants) search server-side and can take a few seconds.
+  for (let wait = 0; wait < 4 && texts.length === 0; wait++) {
+    await pause(900, 1200);
+    ({ loc, texts } = await visibleOptions(page));
+  }
   if (texts.length === 0) {
     await input.fill('');
     await input.click();
