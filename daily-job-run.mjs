@@ -213,6 +213,22 @@ export function agentTools(scripts, dataRoot = CODE_ROOT) {
   return { allowed, denied };
 }
 
+/** Applications submitted today (local date), from both apply scripts' logs. */
+export function submittedToday(dir = STATE_DIR, today = localToday()) {
+  let n = 0;
+  for (const name of ['log.jsonl', 'ats-log.jsonl']) {
+    const path = join(dir, name);
+    if (!existsSync(path)) continue;
+    for (const line of readFileSync(path, 'utf-8').split('\n')) {
+      try {
+        const e = JSON.parse(line);
+        if (e.status === 'submitted' && e.at && localToday(new Date(e.at)) === today) n++;
+      } catch { /* partial line */ }
+    }
+  }
+  return n;
+}
+
 function rootScripts() {
   return readdirSync(CODE_ROOT).filter((n) => n.endsWith('.mjs')).sort();
 }
@@ -420,8 +436,11 @@ async function main() {
     for (const w of exported.warnings) console.warn(`  ! ${w}`);
 
     // 4. Apply
-    if (!opts.skipApply) {
-      const args = ['--from-tracker', '--limit', String(settings.apply_limit), '--min-score', String(settings.min_score)];
+    // apply_limit is per day: several runs a day share it.
+    const left = Math.max(0, Number(settings.apply_limit) - submittedToday());
+    if (!opts.skipApply && left === 0) console.log(`\nApply: skipped, already ${settings.apply_limit} submitted today (daily.apply_limit)`);
+    if (!opts.skipApply && left > 0) {
+      const args = ['--from-tracker', '--limit', String(left), '--min-score', String(settings.min_score)];
       if (opts.submit) args.push('--submit');
       if (!process.stdin.isTTY) args.push('--no-prompt');
       if (opts.dryRun) args.push('--dry-run');
