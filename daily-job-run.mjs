@@ -443,6 +443,8 @@ async function main() {
       const args = ['--from-tracker', '--limit', String(left), '--min-score', String(settings.min_score)];
       if (opts.submit) args.push('--submit');
       if (!process.stdin.isTTY) args.push('--no-prompt');
+      // No display (cloud container, cron): a headed browser cannot start.
+      if (process.platform === 'linux' && !process.env.DISPLAY && !process.env.WAYLAND_DISPLAY) args.push('--headless');
       if (opts.dryRun) args.push('--dry-run');
       summary.applyExit = runNode('auto-apply-workday.mjs', args, { label: 'Apply: Workday jobs from the tracker' });
       summary.applyAtsExit = runNode('auto-apply-ats.mjs', args, { label: 'Apply: Greenhouse / Lever / Ashby jobs from the tracker' });
