@@ -146,3 +146,7 @@ test('a required privacy-notice terms box answered Yes is not an opt-in', () => 
   const optIn = page() + '\nWould you like to receive job alerts and text messages about future opportunities?\nYes';
   assert.ok(validateReview(optIn, facts).some((i) => /opt-in/.test(i)));
 });
+
+test('a comma-listed field category that includes the cv.md field passes', () => {
+  assert.ok(!validateReview(page({ field: 'IT, Computer Science, & Cybersecurity' }), facts).some((i) => /field of study/.test(i)));
+});
