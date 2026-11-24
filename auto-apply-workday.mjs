@@ -391,6 +391,20 @@ function alreadySubmitted(url) {
   });
 }
 
+/** True once a board has refused this URL as a bot twice (invisible CAPTCHA / human-check code): leave it to the candidate. */
+function botBlocked(url, times = 2) {
+  if (!existsSync(LOG_PATH)) return false;
+  const key = urlKey(url);
+  let n = 0;
+  for (const line of readFileSync(LOG_PATH, 'utf-8').split('\n')) {
+    try {
+      const e = JSON.parse(line);
+      if (['not_confirmed', 'needs_code'].includes(e.status) && urlKey(e.url) === key) n++;
+    } catch { /* partial line */ }
+  }
+  return n >= times;
+}
+
 function logResult(entry) {
   mkdirSync(STATE_DIR, { recursive: true });
   appendFileSync(LOG_PATH, `${JSON.stringify({ at: new Date().toISOString(), ...entry })}\n`);
@@ -1791,6 +1805,6 @@ if (isMainModule(import.meta.url)) {
 
 export {
   normalizeLabel, urlKey, runJob, authenticate, fillPage, startApplication, settle,
-  loadEnv, readYamlFile, readLearned, saveLearned, resolveJobPdf, reportUrl, alreadySubmitted, logResult, screenshot,
+  loadEnv, readYamlFile, readLearned, saveLearned, resolveJobPdf, reportUrl, alreadySubmitted, botBlocked, logResult, screenshot,
   markApplied, markClosed, tick, pause, CONFIG_PATH, DATA_ROOT, CODE_ROOT, CONFIRM_RE, ALREADY_RE,
 };

@@ -34,7 +34,7 @@ import { keepJobsWithOrderedResumes } from './lib/resume-text-order.mjs';
 import { parseCvExperience } from './lib/workday-answers.mjs';
 import { createResolver, isAgreementLabel, isOptInLabel, ALTERNATIVES, normalizeLabel, parseCvEducation, pickOption, reportPayTarget } from './lib/workday-answers.mjs';
 import {
-  alreadySubmitted, blacklistHit, findReportPdf, loadEnv, logResult, markApplied, markClosed, parseBatchFile, parseBlacklist,
+  alreadySubmitted, botBlocked, blacklistHit, findReportPdf, loadEnv, logResult, markApplied, markClosed, parseBatchFile, parseBlacklist,
   pause, readLearned, readYamlFile, reportUrl, resolveJobPdf, saveLearned, screenshot, selectTrackerJobs, tick,
   CONFIG_PATH, CONFIRM_RE, ALREADY_RE, DATA_ROOT,
 } from './auto-apply-workday.mjs';
@@ -771,6 +771,11 @@ async function main() {
     if (!opts.force && alreadySubmitted(job.url)) {
       say('  already submitted (data/auto-apply/log.jsonl) — skipping; --force to redo');
       summary.push({ url: job.url, status: 'skipped_duplicate' });
+      return;
+    }
+    if (!opts.force && botBlocked(job.url)) {
+      say('  board refused this automated browser twice (CAPTCHA / human check) — left for the candidate to submit; --force to retry');
+      summary.push({ url: job.url, status: 'skipped_bot_blocked' });
       return;
     }
     const jctx = {
